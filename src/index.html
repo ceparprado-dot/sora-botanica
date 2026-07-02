@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sora Botánica - Monitoreo Silvicultural</title>
+    <!-- Tailwind CSS para diseño rápido y moderno -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React y ReactDOM desde CDN -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Babel para compilar JSX en el navegador -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons para hermosos iconos -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* Estilos personalizados para simular relieve y profundidad */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        body {
+            background-color: #f0f4f1;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="root"></div>
+
+    <!-- Código de nuestra Aplicación React -->
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Clave comunitaria para filtro selectivo
+        const SECURITY_PIN = "NogalAndino";
+
+        // Coordenadas simuladas por defecto si el GPS falla (Eje Cafetero central)
+        const DEFAULT_LAT = 5.0689;
+        const DEFAULT_LNG = -75.5174;
+        const DEFAULT_ALT = 1850;
+
+        function App() {
+            // --- ESTADOS DE LA APLICACIÓN ---
+            const [pinInput, setPinInput] = useState("");
+            const [isUnlocked, setIsUnlocked] = useState(false);
+            const [securityError, setSecurityError] = useState("");
+            const [activeTab, setActiveTab] = useState("capture");
+            const [toastMessage, setToastMessage] = useState(null);
+
+            // Lista de plantas registradas (inicia con algunos datos muestra del Eje Cafetero)
+            const [plants, setPlants] = useState(() => {
+                const saved = localStorage.getItem("sora_botanica_data");
+                return saved ? JSON.parse(saved) : [
+                    {
+                        id: "1",
+                        name: "Nogal Cafetero",
+                        scientificName: "Cordia alliodora",
+                        lat: 5.0695,
+                        lng: -75.5180,
+                        alt: 1860,
+                        date: "2026-07-02",
+                        phase: "Plántula",
+                        photos: { haz: "🌿", enves: "🍃", silueta: "🌳" },
+                        shade: "Media",
+                        threats: "Ganadería cercana",
+                        notes: "Ubicado cerca al sendero del nacimiento de agua. Sano."
+                    },
+                    {
+                        id: "2",
+                        name: "Yagé / Ayahuasca",
+                        scientificName: "Banisteriopsis caapi",
+                        lat: 5.0675,
+                        lng: -75.5165,
+                        alt: 1820,
+                        date: "2026-06-28",
+                        phase: "Arbusto joven",
+                        photos: { haz: "🌱", enves: "🌿", silueta: "🌿" },
+                        shade: "Alta",
+                        threats: "Ninguna",
+                        notes: "Planta medicinal tradicional, trepadora nativa bien desarrollada."
+                    }
+                ];
+            });
+
+            // Estado del formulario de captura actual (4 fases)
+            const [capturePhase, setCapturePhase] = useState(1);
+            const [gpsData, setGpsData] = useState({ lat: null, lng: null, alt: null, accuracy: null });
+            const [gpsLoading, setGpsLoading] = useState(false);
+            
+            const [photoHaz, setPhotoHaz] = useState(null);
+            const [photoEnves, setPhotoEnves] = useState(null);
+            const [photoSilueta, setPhotoSilueta] = useState(null);
+            
+            const [aiSuggestion, setAiSuggestion] = useState(null);
+            const [aiLoading, setAiLoading] = useState(false);
+            const [manualName, setManualName] = useState("");
+            const [manualScientific, setManualScientific] = useState("");
+            
+            const [selectedGrowth, setSelectedGrowth] = useState("Plántula");
+            const [selectedShade, setSelectedShade] = useState("Media");
+            const [hasFlowers, setHasFlowers] = useState(false);
+            const [hasFruits, setHasFruits] = useState(false);
+            const [detectedThreats, setDetectedThreats] = useState("");
+            const [observations, setObservations] = useState("");
+
+            // --- EFECTOS ---
+            useEffect(() => {
+                // Comprobar si el usuario ya se había autenticado antes en este celular
+                const unlockedBefore = localStorage.getItem("sora_unlocked") === "true";
+                if (unlockedBefore) {
+                    setIsUnlocked(true);
+                }
+            }, []);
+
+            useEffect(() => {
+                // Guardar inventario localmente
+                localStorage.setItem("sora_botanica_data", JSON.stringify(plants));
+            }, [plants]);
+
+            // Re-renderizar iconos de Lucide cuando cambia la vista o el estado de desbloqueo
+            useEffect(() => {
+                if (window.lucide) {
+                    window.lucide.createIcons();
+                }
+            }, [isUnlocked, activeTab, capturePhase, plants, aiSuggestion, gpsLoading]);
+
+            // --- SISTEMA DE NOTIFICACIONES CUSTOM (Sin usar alert) ---
+            const showToast = (msg) => {
+                setToastMessage(msg);
+                setTimeout(() => setToastMessage(null), 4000);
+            };
+
+            // --- MANEJO DE SEGURIDAD ---
+            const handleUnlock = (e) => {
+                e.preventDefault();
+                if (pinInput.trim() === SECURITY_PIN) {
+                    setIsUnlocked(true);
+                    setSecurityError("");
+                    localStorage.setItem("sora_unlocked", "true");
+                    showToast("🔓 ¡Acceso concedido! Bienvenido a la reserva.");
+                } else {
+                    setSecurityError("PIN incorrecto. Por favor solicita el código al administrador de la reserva.");
+                }
+            };
+
+            const handleLock = () => {
+                setIsUnlocked(false);
+                setPinInput("");
+                localStorage.removeItem("sora_unlocked");
+            };
+
+            // --- OBTENER GPS REAL ---
+            const handleGetGPS = () => {
+                setGpsLoading(true);
+                if (!navigator.geolocation) {
+                    showToast("❌ Tu navegador no soporta geolocalización. Usando simulación.");
+                    simulateGPS();
+                    return;
+                }
+
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        setGpsData({
+                            lat: parseFloat(position.coords.latitude.toFixed(6)),
+                            lng: parseFloat(position.coords.longitude.toFixed(6)),
+                            alt: position.coords.altitude ? Math.round(position.coords.altitude) : DEFAULT_ALT,
+                            accuracy: Math.round(position.coords.accuracy)
+                        });
+                        setGpsLoading(false);
+                        showToast("🛰️ Coordenadas satelitales obtenidas con éxito.");
+                    },
+                    (error) => {
+                        console.error(error);
+                        showToast("⚠️ Señal GPS débil bajo el dosel forestal. Simulando coordenadas del Eje Cafetero.");
+                        simulateGPS();
+                    },
+                    { enableHighAccuracy: true, timeout: 10000 }
+                );
+            };
+
+            const simulateGPS = () => {
+                // Pequeña variación aleatoria para simular distintas zonas de la finca
+                const randomOffsetLat = (Math.random() - 0.5) * 0.005;
+                const randomOffsetLng = (Math.random() - 0.5) * 0.005;
+                const randomAlt = Math.floor(1800 + Math.random() * 150);
+                
+                setGpsData({
+                    lat: parseFloat((DEFAULT_LAT + randomOffsetLat).toFixed(6)),
+                    lng: parseFloat((DEFAULT_LNG + randomOffsetLng).toFixed(6)),
+                    alt: randomAlt,
+                    accuracy: 8
+                });
+                setGpsLoading(false);
+            };
+
+            // --- MANEJO DE FOTOS ---
+            const handlePhotoChange = (phase, file) => {
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        if (phase === 'haz') setPhotoHaz(reader.result);
+                        if (phase === 'enves') setPhotoEnves(reader.result);
+                        if (phase === 'silueta') setPhotoSilueta(reader.result);
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            // --- SIMULACIÓN DE CLASIFICACIÓN CON IA (GEMINI MOCK INTEGRATION) ---
+            const handleAnalyzeWithAI = () => {
+                if (!photoHaz) {
+                    showToast("❌ Sube al menos la foto de la hoja (haz) para analizar.");
+                    return;
+                }
+                setAiLoading(true);
+                
+                // Simulación de análisis cognitivo de Gemini
+                setTimeout(() => {
+                    const mockDatabase = [
+                        {
+                            name: "Nogal Cafetero",
+                            scientificName: "Cordia alliodora",
+                            confidence: 94,
+                            notes: "Especie forestal nativa de alto valor comercial y conservación. Hojas simples, alternas, ásperas al tacto. Copa estratificada."
+                        },
+                        {
+                            name: "Limoncillo Medicinal",
+                            scientificName: "Cymbopogon citratus",
+                            confidence: 98,
+                            notes: "Planta medicinal de uso común. Hojas largas, olor cítrico característico al estrujarse. Ideal para control de erosión en laderas."
+                        },
+                        {
+                            name: "Sietecueros",
+                            scientificName: "Tibouchina lepidota",
+                            confidence: 89,
+                            notes: "Árbol ornamental y protector de cuencas del Eje Cafetero. Flores moradas vistosas. Corteza que se desprende en capas delgadas."
+                        }
+                    ];
+
+                    // Tomamos uno al azar para simular la IA
+                    const picked = mockDatabase[Math.floor(Math.random() * mockDatabase.length)];
+                    setAiSuggestion(picked);
+                    setManualName(picked.name);
+                    setManualScientific(picked.scientificName);
+                    setAiLoading(false);
+                    showToast("🤖 Clasificación de Gemini completada.");
+                }, 2000);
+            };
+
+            // --- GUARDAR NUEVO REGISTRO EN INVENTARIO ---
+            const handleSaveRecord = () => {
+                if (!manualName) {
+                    showToast("❌ Debes ingresar un nombre común para la planta.");
+                    return;
+                }
+
+                const newPlant = {
+                    id: Date.now().toString(),
+                    name: manualName,
+                    scientificName: manualScientific || "Desconocido",
+                    lat: gpsData.lat || DEFAULT_LAT,
+                    lng: gpsData.lng || DEFAULT_LNG,
+                    alt: gpsData.alt || DEFAULT_ALT,
+                    date: new Date().toISOString().split('T')[0],
+                    phase: selectedGrowth,
+                    photos: {
+                        haz: photoHaz || "🌱",
+                        enves: photoEnves || "🍃",
+                        silueta: photoSilueta || "🌳"
+                    },
+                    shade: selectedShade,
+                    threats: detectedThreats || "Ninguna detectada",
+                    notes: observations || "Sin notas adicionales."
+                };
+
+                setPlants([newPlant, ...plants]);
+                resetForm();
+                showToast("💾 ¡Registro guardado exitosamente en la base local!");
+                setActiveTab("inventory");
+            };
+
+            const resetForm = () => {
+                setCapturePhase(1);
+                setGpsData({ lat: null, lng: null, alt: null, accuracy: null });
+                setPhotoHaz(null);
+                setPhotoEnves(null);
+                setPhotoSilueta(null);
+                setAiSuggestion(null);
+                setManualName("");
+                setManualScientific("");
+                setSelectedGrowth("Plántula");
+                setSelectedShade("Media");
+                setHasFlowers(false);
+                setHasFruits(false);
+                setDetectedThreats("");
+                setObservations("");
+            };
+
+            const handleDeletePlant = (id) => {
+                const filtered = plants.filter(p => p.id !== id);
+                setPlants(filtered);
+                showToast("🗑️ Registro eliminado.");
+            };
+
+            // --- CÁLCULO DEL ÍNDICE DE DIVERSIDAD DE SHANNON-WIENER (H') ---
+            // Fórmula: H' = -sum(pi * ln(pi))
+            const calculateShannonIndex = () => {
+                if (plants.length === 0) return 0;
+                
+                // 1. Contar abundancia de cada especie científica
+                const counts = {};
+                plants.forEach(p => {
+                    const key = p.scientificName.toLowerCase().trim();
+                    counts[key] = (counts[key] || 0) + 1;
+                });
+
+                const N = plants.length;
+                let shannon = 0;
+
+                // 2. Calcular pi y aplicar fórmula
+                Object.values(counts).forEach(count => {
+                    const pi = count / N;
+                    shannon += pi * Math.log(pi);
+                });
+
+                return Math.abs(shannon).toFixed(3);
+            };
+
+            const getDiversityLevel = (shannon) => {
+                const val = parseFloat(shannon);
+                if (val === 0) return { label: "Monocultivo / Sin datos", color: "text-gray-500", desc: "Registra más especies para analizar." };
+                if (val < 1.5) return { label: "Diversidad Baja (Intervenida)", color: "text-amber-600", desc: "Bosque o sotobosque degradado o muy joven." };
+                if (val < 3.0) return { label: "Diversidad Media (En Recuperación)", color: "text-emerald-600", desc: "Bosque secundario típico del Eje Cafetero." };
+                return { label: "Diversidad Alta (Santuario Virgen)", color: "text-green-700", desc: "Estabilidad ecológica y bosque maduro excelente." };
+            };
+
+            const shannonVal = calculateShannonIndex();
+            const diversityStatus = getDiversityLevel(shannonVal);
+
+            // --- EXPORTAR DATOS COMO CSV ---
+            const handleExportCSV = () => {
+                if (plants.length === 0) {
+                    showToast("❌ No hay datos para exportar.");
+                    return;
+                }
+
+                let csvContent = "data:text/csv;charset=utf-8,";
+                csvContent += "ID,Nombre Comun,Nombre Cientifico,Latitud,Longitud,Altitud(msnm),Fecha,Estado Desarrollo,Sombra,Amenazas,Notas\n";
+
+                plants.forEach(p => {
+                    const row = [
+                        p.id,
+                        `"${p.name}"`,
+                        `"${p.scientificName}"`,
+                        p.lat,
+                        p.lng,
+                        p.alt,
+                        p.date,
+                        `"${p.phase}"`,
+                        `"${p.shade}"`,
+                        `"${p.threats}"`,
+                        `"${p.notes.replace(/"/g, '""')}"`
+                    ].join(",");
+                    csvContent += row + "\n";
+                });
+
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", `inventario_sora_botanica_${new Date().toISOString().split('T')[0]}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                showToast("📥 Archivo CSV descargado con éxito.");
+            };
+
+            // --- PANTALLA DE BLOQUEO (SEGURIDAD) ---
+            if (!isUnlocked) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-emerald-950 px-4">
+                        <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl p-8 border border-emerald-800 text-center">
+                            <div className="inline-flex items-center justify-center w-20 h-20 bg-emerald-100 rounded-full mb-6">
+                                <i data-lucide="lock" className="w-10 h-10 text-emerald-800"></i>
+                            </div>
+                            <h1 className="text-3xl font-bold text-gray-900 mb-2">Sora Botánica</h1>
+                            <p className="text-sm text-gray-500 mb-6 font-medium">Monitoreo Silvicultural • Eje Cafetero</p>
+                            
+                            <div className="bg-emerald-50 rounded-2xl p-4 mb-6 border border-emerald-100">
+                                <p className="text-xs text-emerald-800 leading-relaxed text-left">
+                                    🌲 Esta aplicación resguarda coordenadas botánicas de especies nativas y medicinales en peligro. Por favor ingresa el PIN de seguridad comunitario.
+                                </p>
+                            </div>
+
+                            <form onSubmit={handleUnlock} className="space-y-4">
+                                <div>
+                                    <input 
+                                        type="password" 
+                                        placeholder="Escribe el PIN de Seguridad..."
+                                        className="w-full px-5 py-3 rounded-2xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-600 text-center font-bold tracking-widest text-lg"
+                                        value={pinInput}
+                                        onChange={(e) => setPinInput(e.target.value)}
+                                        required
+                                    />
+                                </div>
+                                {securityError && (
+                                    <p className="text-xs text-rose-600 font-semibold">{securityError}</p>
+                                )}
+                                <button 
+                                    type="submit"
+                                    className="w-full bg-emerald-800 hover:bg-emerald-900 text-white font-bold py-3.5 px-6 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2"
+                                >
+                                    <span>Acceder a la Finca</span>
+                                    <i data-lucide="arrow-right" className="w-5 h-5"></i>
+                                </button>
+                            </form>
+                            
+                            <p className="text-xs text-gray-400 mt-8">Proyecto comunitario de conservación y reforestación</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            // --- PANTALLA PRINCIPAL ---
+            return (
+                <div className="min-h-screen flex flex-col pb-24 md:pb-6">
+                    {/* TOAST NOTIFICATION CONTAINER */}
+                    {toastMessage && (
+                        <div className="fixed top-5 left-1/2 transform -translate-x-1/2 z-50 bg-gray-900 text-white text-sm font-semibold px-6 py-3.5 rounded-full shadow-2xl border border-gray-800 flex items-center gap-3 animate-bounce">
+                            <i data-lucide="info" className="w-5 h-5 text-emerald-400"></i>
+                            <span>{toastMessage}</span>
+                        </div>
+                    )}
+
+                    {/* CABECERA */}
+                    <header className="bg-emerald-900 text-white py-5 px-6 shadow-md sticky top-0 z-40">
+                        <div className="max-w-6xl mx-auto flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-emerald-800 rounded-xl">
+                                    <i data-lucide="leaf" className="w-6 h-6 text-emerald-300"></i>
+                                </div>
+                                <div>
+                                    <h1 className="text-xl font-bold tracking-tight">Sora Botánica</h1>
+                                    <p className="text-xs text-emerald-300">Reserva Natural • Eje Cafetero</p>
+                                </div>
+                            </div>
+                            
+                            {/* MINI INDICADOR DE SHANNON EN HEADER */}
+                            <div className="hidden sm:flex items-center gap-2 bg-emerald-950 px-4 py-2 rounded-2xl border border-emerald-800">
+                                <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-400">Diversidad H'</span>
+                                <span className="text-lg font-extrabold text-white">{shannonVal}</span>
+                            </div>
+
+                            <button 
+                                onClick={handleLock}
+                                className="p-2.5 bg-emerald-950 hover:bg-emerald-800 rounded-xl text-emerald-300 transition-colors flex items-center gap-2 text-sm"
+                                title="Cerrar sesión"
+                            >
+                                <i data-lucide="log-out" className="w-4 h-4"></i>
+                                <span className="hidden md:inline">Salir</span>
+                            </button>
+                        </div>
+                    </header>
+
+                    {/* CONTENIDO PRINCIPAL */}
+                    <main className="flex-grow max-w-6xl w-full mx-auto p-4 md:p-6">
+                        
+                        {/* WIDGET DEL INDICE DE SHANNON */}
+                        <section className="bg-white rounded-3xl p-6 shadow-sm border border-emerald-100 mb-6 flex flex-col md:flex-row items-center justify-between gap-6">
+                            <div className="flex items-center gap-4">
+                                <div className="w-16 h-16 bg-emerald-50 rounded-2xl flex items-center justify-center border border-emerald-100 flex-shrink-0">
+                                    <i data-lucide="bar-chart-2" className="w-8 h-8 text-emerald-800"></i>
+                                </div>
+                                <div>
+                                    <h2 className="text-lg font-bold text-gray-900 flex items-center gap-1.5">
+                                        Índice de Shannon-Wiener:
+                                        <span className="text-emerald-800 font-extrabold text-xl ml-1">{shannonVal}</span>
+                                    </h2>
+                                    <p className={`text-sm font-semibold ${diversityStatus.color} mt-0.5`}>
+                                        {diversityStatus.label}
+                                    </p>
+                                    <p className="text-xs text-gray-500 mt-1">{diversityStatus.desc}</p>
+                                </div>
+                            </div>
+                            <div className="w-full md:w-auto flex flex-col sm:flex-row gap-3">
+                                <button 
+                                    onClick={handleExportCSV}
+                                    className="bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 font-bold py-2.5 px-5 rounded-2xl text-xs transition-all flex items-center justify-center gap-2"
+                                >
+                                    <i data-lucide="download" className="w-4 h-4"></i>
+                                    Exportar Excel/CSV
+                                </button>
+                                <div className="text-center text-[10px] text-gray-400 bg-gray-50 px-3 py-2 rounded-xl border border-gray-100 self-center">
+                                    {plants.length} especies registradas
+                                </div>
+                            </div>
+                        </section>
+
+                        {/* RENDERIZADO DE LAS PESTAÑAS */}
+                        {activeTab === "capture" && (
+                            <section className="bg-white rounded-3xl p-6 shadow-sm border border-emerald-100 animate-fadeIn">
+                                <div className="flex items-center justify-between pb-4 border-b border-gray-100 mb-6">
+                                    <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                                        <i data-lucide="camera" className="text-emerald-800"></i>
+                                        Registro Rápido en Campo (Paso {capturePhase} de 4)
+                                    </h2>
+                                    <button onClick={resetForm} className="text-xs text-rose-600 hover:underline font-semibold">
+                                        Reiniciar
+                                    </button>
+                                </div>
+
+                                {/* BARRA DE PROGRESO DE FASES */}
+                                <div className="flex items-center justify-between mb-8">
+                                    {[1, 2, 3, 4].map((num) => (
+                                        <div key={num} className="flex-1 flex items-center">
+                                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
+                                                capturePhase >= num ? 'bg-emerald-800 text-white ring-4 ring-emerald-100' : 'bg-gray-100 text-gray-400'
+                                            }`}>
+                                                {num}
+                                            </div>
+                                            {num < 4 && (
+                                                <div className={`flex-grow h-1 mx-2 rounded ${
+                                                    capturePhase > num ? 'bg-emerald-800' : 'bg-gray-100'
+                                                }`}></div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* CONTENIDOS DE LAS FASES */}
+                                {capturePhase === 1 && (
+                                    <div className="space-y-6">
+                                        <div className="bg-emerald-50 p-5 rounded-2xl border border-emerald-100">
+                                            <h3 className="font-bold text-emerald-950 mb-1 flex items-center gap-1.5 text-sm">
+                                                <i data-lucide="map-pin" className="w-4 h-4"></i>
+                                                Paso 1: Obtener Ubicación Satelital
+                                            </h3>
+                                            <p className="text-xs text-emerald-800 leading-relaxed">
+                                                Para registrar correctamente el corredor biológico, la app capturará la latitud, longitud y altitud exacta sobre el nivel del mar en tu finca.
+                                            </p>
+                                        </div>
+
+                                        <div className="flex flex-col items-center justify-center py-8 border-2 border-dashed border-gray-200 rounded-3xl bg-gray-50">
+                                            {gpsLoading ? (
+                                                <div className="text-center">
+                                                    <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-emerald-800 mx-auto mb-3"></div>
+                                                    <p className="text-sm font-semibold text-gray-600">Calculando posición exacta...</p>
+                                                </div>
+                                            ) : gpsData.lat ? (
+                                                <div className="text-center space-y-3">
+                                                    <div className="inline-flex items-center justify-center w-12 h-12 bg-emerald-100 rounded-full text-emerald-800">
+                                                        <i data-lucide="check-circle-2"></i>
+                                                    </div>
+                                                    <p className="text-sm font-bold text-gray-800">Ubicación Obtenida</p>
+                                                    <div className="grid grid-cols-3 gap-4 max-w-sm mx-auto bg-white p-3 rounded-2xl border border-gray-100 shadow-sm text-xs">
+                                                        <div>
+                                                            <span className="block text-gray-400">Latitud</span>
+                                                            <span className="font-mono font-bold text-gray-700">{gpsData.lat}</span>
+                                                        </div>
+                                                        <div>
+                                                            <span className="block text-gray-400">Longitud</span>
+                                                            <span className="font-mono font-bold text-gray-700">{gpsData.lng}</span>
+                                                        </div>
+                                                        <div>
+                                                            <span className="block text-gray-400">Altitud</span>
+                                                            <span className="font-bold text-emerald-800">{gpsData.alt} msnm</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="text-center">
+                                                    <button 
+                                                        onClick={handleGetGPS}
+                                                        className="bg-emerald-800 hover:bg-emerald-900 text-white font-bold py-3.5 px-8 rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 mx-auto"
+                                                    >
+                                                        <i data-lucide="navigation" className="w-5 h-5"></i>
+                                                        Tomar Coordenadas GPS
+                                                    </button>
+                                                    <p className="text-xs text-gray-400 mt-2">Funciona sin internet en bosques cerrados</p>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="flex justify-end pt-4">
+                                            <button 
+                                                onClick={() => {
+                                                    if (!gpsData.lat) simulateGPS();
+                                                    setCapturePhase(2);
+                                                }}
+                                                className="bg-emerald-800 text-white font-bold py-3 px-6 rounded-2xl flex items-center gap-1.5 hover:bg-emerald-900 transition-all text-sm"
+                                            >
+                                                Continuar a Fotos
+                                                <i data-lucide="chevron-right"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {capturePhase === 2 && (
+                                    <div className="space-y-6">
+                                        <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
+                                            <h3 className="font-bold text-emerald-950 mb-1 flex items-center gap-1.5 text-sm">
+                                                <i data-lucide="image" className="w-4 h-4"></i>
+                                                Paso 2: Registro Fotográfico de Identificación
+                                            </h3>
+                                            <p className="text-xs text-emerald-800 leading-relaxed">
+                                                Para identificar plántulas necesitamos tres tomas específicas. Esto le permite a Gemini clasificar con máxima certeza.
+                                            </p>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                            {/* HAZ DE LA HOJA */}
+                                            <div className="bg-gray-50 border border-gray-200 p-4 rounded-2xl text-center flex flex-col justify-between">
+                                                <div>
+                                                    <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-full">Foto 1: Haz (Frente)</span>
+                                                    <p className="text-[10px] text-gray-500 mt-2 mb-4">Detalle de las venas de la hoja por encima</p>
+                                                </div>
+                                                <div className="my-2 flex items-center justify-center h-32 bg-white rounded-xl border border-dashed border-gray-300 relative overflow-hidden">
+                                                    {photoHaz ? (
+                                                        <img src={photoHaz} className="w-full h-full object-cover" />
+                                                    ) : (
+                                                        <i data-lucide="leaf" className="w-8 h-8 text-gray-300"></i>
+                                                    )}
+                                                </div>
+                                                <input 
+                                                    type="file" 
+                                                    accept="image/*" 
+                                                    id="file-haz" 
+                                                    className="hidden" 
+                                                    onChange={(e) => handlePhotoChange('haz', e.target.files[0])}
+                                                />
+                                                <label htmlFor="file-haz" className="mt-4 bg-white hover:bg-gray-100 text-gray-700 font-bold py-2 px-4 border border-gray-300 rounded-xl text-xs cursor-pointer block">
+                                                    {photoHaz ? "Cambiar Foto" : "Subir / Cámara"}
+                                                </label>
+                                            </div>
+
+                                            {/* ENVÉS DE LA HOJA */}
+                                            <div className="bg-gray-50 border border-gray-200 p-4 rounded-2xl text-center flex flex-col justify-between">
+                                                <div>
+                                                    <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-full">Foto 2: Envés y Tallo</span>
+                                                    <p className="text-[10px] text-gray-500 mt-2 mb-4">La hoja por detrás y unión con la rama</p>
+                                                </div>
+                                                <div className="my-2 flex items-center justify-center h-32 bg-white rounded-xl border border-dashed border-gray-300 relative overflow-hidden">
+                                                    {photoEnves ? (
+                                                        <img src={photoEnves} className="w-full h-full object-cover" />
+                                                    ) : (
+                                                        <i data-lucide="leaf" className="w-8 h-8 text-gray-300 rotate-90"></i>
+                                                    )}
+                                                </div>
+                                                <input 
+                                                    type="file" 
+                                                    accept="image/*" 
+                                                    id="file-enves" 
+                                                    className="hidden" 
+                                                    onChange={(e) => handlePhotoChange('enves', e.target.files[0])}
+                                                />
+                                                <label htmlFor="file-enves" className="mt-4 bg-white hover:bg-gray-100 text-gray-700 font-bold py-2 px-4 border border-gray-300 rounded-xl text-xs cursor-pointer block">
+                                                    {photoEnves ? "Cambiar Foto" : "Subir / Cámara"}
+                                                </label>
+                                            </div>
+
+                                            {/* SILUETA COMPLETA */}
+                                            <div className="bg-gray-50 border border-gray-200 p-4 rounded-2xl text-center flex flex-col justify-between">
+                                                <div>
+                                                    <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-full">Foto 3: Porte / Árbol</span>
+                                                    <p className="text-[10px] text-gray-500 mt-2 mb-4">Foto de la planta completa en su entorno</p>
+                                                </div>
+                                                <div className="my-2 flex items-center justify-center h-32 bg-white rounded-xl border border-dashed border-gray-300 relative overflow-hidden">
+                                                    {photoSilueta ? (
+                                                        <img src={photoSilueta} className="w-full h-full object-cover" />
+                                                    ) : (
+                                                        <i data-lucide="trees" className="w-8 h-8 text-gray-300"></i>
+                                                    )}
+                                                </div>
+                                                <input 
+                                                    type="file" 
+                                                    accept="image/*" 
+                                                    id="file-silueta" 
+                                                    className="hidden" 
+                                                    onChange={(e) => handlePhotoChange('silueta', e.target.files[0])}
+                                                />
+                                                <label htmlFor="file-silueta" className="mt-4 bg-white hover:bg-gray-100 text-gray-700 font-bold py-2 px-4 border border-gray-300 rounded-xl text-xs cursor-pointer block">
+                                                    {photoSilueta ? "Cambiar Foto" : "Subir / Cámara"}
+                                                </label>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex justify-between pt-4">
+                                            <button 
+                                                onClick={() => setCapturePhase(1)}
+                                                className="border border-gray-300 text-gray-700 py-2.5 px-5 rounded-2xl text-sm font-bold flex items-center gap-1 hover:bg-gray-50"
+                                            >
+                                                <i data-lucide="chevron-left"></i> Atrás
+                                            </button>
+                                            <button 
+                                                onClick={() => setCapturePhase(3)}
+                                                className="bg-emerald-800 text-white font-bold py-3 px-6 rounded-2xl flex items-center gap-1.5 hover:bg-emerald-900 transition-all text-sm"
+                                            >
+                                                Continuar a Identificación
+                                                <i data-lucide="chevron-right"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {capturePhase === 3 && (
+                                    <div className="space-y-6">
+                                        <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
+                                            <h3 className="font-bold text-emerald-950 mb-1 flex items-center gap-1.5 text-sm">
+                                                <i data-lucide="cpu" className="w-4 h-4"></i>
+                                                Paso 3: Clasificación Botánica Inteligente
+                                            </h3>
+                                            <p className="text-xs text-emerald-800 leading-relaxed">
+                                                Utiliza la Inteligencia Artificial de Gemini para predecir la especie o ingresa los nombres tradicionales que conozcas.
+                                            </p>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                            {/* PANEL DE CLASIFICACIÓN DE IA */}
+                                            <div className="bg-gray-50 border border-gray-200 p-6 rounded-3xl flex flex-col justify-between">
+                                                <div>
+                                                    <h4 className="font-bold text-gray-900 text-sm mb-2">Clasificación Automática con Gemini</h4>
+                                                    <p className="text-xs text-gray-500 mb-4">
+                                                        Analiza la foto del haz con el modelo cognitivo para obtener nombre científico y confianza taxonómica.
+                                                    </p>
+
+                                                    {aiLoading ? (
+                                                        <div className="text-center py-6">
+                                                            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-emerald-800 mx-auto mb-2"></div>
+                                                            <p className="text-xs text-gray-600">Gemini está identificando hojas y tallos...</p>
+                                                        </div>
+                                                    ) : aiSuggestion ? (
+                                                        <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-2xl text-xs space-y-2">
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="font-bold text-emerald-950 text-sm">{aiSuggestion.name}</span>
+                                                                <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
+                                                                    {aiSuggestion.confidence}% Confianza
+                                                                </span>
+                                                            </div>
+                                                            <p className="font-mono text-gray-600 italic">{aiSuggestion.scientificName}</p>
+                                                            <p className="text-gray-500 text-[11px] leading-relaxed mt-1">{aiSuggestion.notes}</p>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="text-center py-6 bg-white border border-gray-200 rounded-2xl">
+                                                            <i data-lucide="sparkles" className="w-8 h-8 text-gray-300 mx-auto mb-2"></i>
+                                                            <p className="text-xs text-gray-400">Analiza tus fotos con IA</p>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                <button 
+                                                    onClick={handleAnalyzeWithAI}
+                                                    disabled={aiLoading}
+                                                    className="mt-4 w-full bg-emerald-800 text-white font-bold py-3 px-4 rounded-2xl text-xs shadow-md hover:bg-emerald-900 transition-all flex items-center justify-center gap-1.5"
+                                                >
+                                                    <i data-lucide="sparkles" className="w-4 h-4"></i>
+                                                    Consultar Clasificación a Gemini
+                                                </button>
+                                            </div>
+
+                                            {/* ENTRADA MANUAL / VERIFICADA */}
+                                            <div className="bg-white border border-gray-200 p-6 rounded-3xl space-y-4">
+                                                <h4 className="font-bold text-gray-900 text-sm">Ficha Botánica Identificada</h4>
+                                                <div>
+                                                    <label className="block text-xs font-bold text-gray-500 mb-1">Nombre Común en la Región</label>
+                                                    <input 
+                                                        type="text" 
+                                                        placeholder="Ej. Nogal Cafetero, Limoncillo..."
+                                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-300 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-800"
+                                                        value={manualName}
+                                                        onChange={(e) => setManualName(e.target.value)}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-xs font-bold text-gray-500 mb-1">Nombre Científico (Taxón)</label>
+                                                    <input 
+                                                        type="text" 
+                                                        placeholder="Ej. Cordia alliodora"
+                                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-300 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-emerald-800"
+                                                        value={manualScientific}
+                                                        onChange={(e) => setManualScientific(e.target.value)}
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex justify-between pt-4">
+                                            <button 
+                                                onClick={() => setCapturePhase(2)}
+                                                className="border border-gray-300 text-gray-700 py-2.5 px-5 rounded-2xl text-sm font-bold flex items-center gap-1 hover:bg-gray-50"
+                                            >
+                                                <i data-lucide="chevron-left"></i> Atrás
+                                            </button>
+                                            <button 
+                                                onClick={() => setCapturePhase(4)}
+                                                className="bg-emerald-800 text-white font-bold py-3 px-6 rounded-2xl flex items-center gap-1.5 hover:bg-emerald-900 transition-all text-sm"
+                                            >
+                                                Continuar a Evaluación
+                                                <i data-lucide="chevron-right"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {capturePhase === 4 && (
+                                    <div className="space-y-6">
+                                        <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
+                                            <h3 className="font-bold text-emerald-950 mb-1 flex items-center gap-1.5 text-sm">
+                                                <i data-lucide="shield-alert" className="w-4 h-4"></i>
+                                                Paso 4: Entorno Silvicultural y Amenazas
+                                            </h3>
+                                            <p className="text-xs text-emerald-800 leading-relaxed">
+                                                Último paso. Registra las condiciones bajo las cuales crece esta especie para entender la salud de tu bosque nativo.
+                                            </p>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                            <div className="space-y-4">
+                                                <div>
+                                                    <label className="block text-xs font-bold text-gray-500 mb-2">Estado de Desarrollo</label>
+                                                    <div className="grid grid-cols-3 gap-2">
+                                                        {["Plántula", "Arbusto joven", "Adulto"].map((p) => (
+                                                            <button 
+                                                                key={p}
+                                                                onClick={() => setSelectedGrowth(p)}
+                                                                className={`py-2 px-3 text-xs font-bold rounded-xl border text-center transition-all ${
+                                                                    selectedGrowth === p ? 'bg-emerald-800 border-emerald-800 text-white' : 'bg-white border-gray-200 text-gray-700'
+                                                                }`}
+                                                            >
+                                                                {p}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div>
+                                                    <label className="block text-xs font-bold text-gray-500 mb-2">Sombra del Entorno (Dosel)</label>
+                                                    <div className="grid grid-cols-3 gap-2">
+                                                        {["Baja", "Media", "Alta"].map((s) => (
+                                                            <button 
+                                                                key={s}
+                                                                onClick={() => setSelectedShade(s)}
+                                                                className={`py-2 px-3 text-xs font-bold rounded-xl border text-center transition-all ${
+                                                                    selectedShade === s ? 'bg-emerald-800 border-emerald-800 text-white' : 'bg-white border-gray-200 text-gray-700'
+                                                                }`}
+                                                            >
+                                                                {s}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex gap-4">
+                                                    <label className="flex items-center gap-2 text-xs font-bold text-gray-700 cursor-pointer">
+                                                        <input 
+                                                            type="checkbox" 
+                                                            className="rounded text-emerald-800 focus:ring-emerald-800 w-4 h-4"
+                                                            checked={hasFlowers}
+                                                            onChange={(e) => setHasFlowers(e.target.checked)}
+                                                        />
+                                                        Tiene Flores
+                                                    </label>
+                                                    <label className="flex items-center gap-2 text-xs font-bold text-gray-700 cursor-pointer">
+                                                        <input 
+                                                            type="checkbox" 
+                                                            className="rounded text-emerald-800 focus:ring-emerald-800 w-4 h-4"
+                                                            checked={hasFruits}
+                                                            onChange={(e) => setHasFruits(e.target.checked)}
+                                                        />
+                                                        Tiene Frutos
+                                                    </label>
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-4">
+                                                <div>
+                                                    <label className="block text-xs font-bold text-gray-500 mb-1">Amenazas Directas en Zona</label>
+                                                    <input 
+                                                        type="text" 
+                                                        placeholder="Ej. Malezas agresivas, pisoteo, plagas..."
+                                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-300 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-800"
+                                                        value={detectedThreats}
+                                                        onChange={(e) => setDetectedThreats(e.target.value)}
+                                                    />
+                                                </div>
+
+                                                <div>
+                                                    <label className="block text-xs font-bold text-gray-500 mb-1">Notas u Observaciones Especiales</label>
+                                                    <textarea 
+                                                        rows="3"
+                                                        placeholder="Describe detalladamente el entorno, colores, condiciones del agua..."
+                                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-300 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-800"
+                                                        value={observations}
+                                                        onChange={(e) => setObservations(e.target.value)}
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex justify-between pt-4">
+                                            <button 
+                                                onClick={() => setCapturePhase(3)}
+                                                className="border border-gray-300 text-gray-700 py-2.5 px-5 rounded-2xl text-sm font-bold flex items-center gap-1 hover:bg-gray-50"
+                                            >
+                                                <i data-lucide="chevron-left"></i> Atrás
+                                            </button>
+                                            <button 
+                                                onClick={handleSaveRecord}
+                                                className="bg-emerald-800 text-white font-extrabold py-3.5 px-8 rounded-2xl flex items-center gap-2 hover:bg-emerald-900 transition-all text-sm shadow-lg"
+                                            >
+                                                <i data-lucide="save"></i>
+                                                Guardar Planta en Inventario
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </section>
+                        )}
+
+                        {activeTab === "inventory" && (
+                            <section className="bg-white rounded-3xl p-6 shadow-sm border border-emerald-100 animate-fadeIn">
+                                <div className="flex items-center justify-between pb-4 border-b border-gray-100 mb-6">
+                                    <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                                        <i data-lucide="folder-git" className="text-emerald-800"></i>
+                                        Inventario Silvicultural de la Finca
+                                    </h2>
+                                    <span className="text-xs bg-emerald-50 text-emerald-800 px-3 py-1.5 rounded-full font-bold">
+                                        {plants.length} Observaciones Totales
+                                    </span>
+                                </div>
+
+                                {plants.length === 0 ? (
+                                    <div className="text-center py-16 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
+                                        <i data-lucide="search-code" className="w-12 h-12 text-gray-300 mx-auto mb-3"></i>
+                                        <h3 className="text-sm font-bold text-gray-600">No hay plantas catalogadas todavía</h3>
+                                        <p className="text-xs text-gray-400 mt-1 mb-4">Captura tu primera planta usando tu celular en el bosque.</p>
+                                        <button 
+                                            onClick={() => setActiveTab("capture")}
+                                            className="bg-emerald-800 text-white text-xs font-bold py-2.5 px-6 rounded-xl shadow hover:bg-emerald-900"
+                                        >
+                                            Tomar Primer Registro
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        {plants.map((p) => (
+                                            <div key={p.id} className="bg-gray-50 border border-gray-200 rounded-3xl p-5 hover:shadow-md transition-shadow flex flex-col justify-between">
+                                                <div>
+                                                    <div className="flex items-start justify-between mb-3">
+                                                        <div>
+                                                            <h3 className="font-extrabold text-gray-900 text-base">{p.name}</h3>
+                                                            <p className="font-mono text-xs text-gray-500 italic mt-0.5">{p.scientificName}</p>
+                                                        </div>
+                                                        <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2.5 py-1 rounded-full">
+                                                            {p.phase}
+                                                        </span>
+                                                    </div>
+
+                                                    <div className="flex gap-2 mb-4">
+                                                        {typeof p.photos.haz === 'string' && p.photos.haz.startsWith('data:') ? (
+                                                            <div className="w-14 h-14 bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
+                                                                <img src={p.photos.haz} className="w-full h-full object-cover" />
+                                                            </div>
+                                                        ) : (
+                                                            <div className="w-14 h-14 bg-white rounded-lg border border-gray-200 flex items-center justify-center text-xl shadow-sm">
+                                                                🌿
+                                                            </div>
+                                                        )}
+                                                        <div className="flex-1 bg-white border border-gray-150 p-2.5 rounded-xl text-[11px] grid grid-cols-2 gap-2 text-gray-600">
+                                                            <div>
+                                                                <span className="text-gray-400 block text-[9px] uppercase font-bold">Coordenadas</span>
+                                                                <span className="font-mono text-gray-700 font-semibold">{p.lat}, {p.lng}</span>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-gray-400 block text-[9px] uppercase font-bold">Altitud</span>
+                                                                <span className="font-bold text-emerald-800">{p.alt} msnm</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="space-y-1.5 text-xs text-gray-600">
+                                                        <p><strong className="text-gray-700">Sombrío:</strong> {p.shade}</p>
+                                                        <p><strong className="text-gray-700">Amenazas:</strong> {p.threats}</p>
+                                                        <p className="text-gray-500 italic leading-relaxed pt-1.5 border-t border-gray-200 text-[11px]">
+                                                            "{p.notes}"
+                                                        </p>
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex items-center justify-between pt-4 mt-4 border-t border-gray-150">
+                                                    <span className="text-[10px] font-bold text-gray-400">Registrado el {p.date}</span>
+                                                    <button 
+                                                        onClick={() => handleDeletePlant(p.id)}
+                                                        className="text-rose-600 hover:text-rose-800 p-2 text-xs font-bold flex items-center gap-1"
+                                                    >
+                                                        <i data-lucide="trash-2" className="w-4 h-4"></i>
+                                                        Eliminar
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </section>
+                        )}
+
+                        {activeTab === "map" && (
+                            <section className="bg-white rounded-3xl p-6 shadow-sm border border-emerald-100 animate-fadeIn">
+                                <div className="flex items-center justify-between pb-4 border-b border-gray-100 mb-6">
+                                    <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                                        <i data-lucide="compass" className="text-emerald-800"></i>
+                                        Mapa de Corredores Biológicos e Inventario
+                                    </h2>
+                                    <span className="text-xs text-gray-400 font-semibold">Representación Cartográfica de la Reserva</span>
+                                </div>
+
+                                <div className="bg-emerald-950 rounded-3xl p-6 text-white overflow-hidden relative border border-emerald-800 min-h-[400px] flex flex-col justify-between">
+                                    {/* MOCK MAP GRAPHIC */}
+                                    <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#064e3b_1px,transparent_1px)] [background-size:16px_16px]"></div>
+                                    
+                                    <div className="relative z-10">
+                                        <p className="text-xs text-emerald-300 max-w-md">
+                                            Gráfica espacial de la densidad vegetal. Cada punto representa una plántula catalogada con coordenadas reales GPS.
+                                        </p>
+                                    </div>
+
+                                    {/* CONTENEDOR CENTRAL DEL MAPA */}
+                                    <div className="relative w-full max-w-lg mx-auto h-64 bg-emerald-900/40 rounded-2xl border border-emerald-700/60 my-6 flex items-center justify-center overflow-hidden">
+                                        <div className="absolute inset-4 border border-emerald-800/40 rounded-xl flex items-center justify-center">
+                                            <span className="text-[9px] text-emerald-600 uppercase font-bold tracking-widest">Nacimiento de agua</span>
+                                        </div>
+
+                                        {/* Ploteo de puntos botánicos dinámicamente */}
+                                        {plants.map((p, index) => {
+                                            // Mapeo simple de coordenadas relativas para plotearlas en el recuadro visual
+                                            const mapX = 20 + ((p.lng + 75.5200) * 10000) % 60;
+                                            const mapY = 20 + ((p.lat - 5.0650) * 10000) % 60;
+                                            return (
+                                                <div 
+                                                    key={p.id}
+                                                    className="absolute group cursor-pointer"
+                                                    style={{ left: `${mapX}%`, top: `${mapY}%` }}
+                                                >
+                                                    <div className="w-4 h-4 bg-emerald-400 border-2 border-white rounded-full shadow-lg flex items-center justify-center animate-pulse">
+                                                        <span className="text-[7px] text-emerald-950 font-black">{index + 1}</span>
+                                                    </div>
+                                                    
+                                                    {/* Tooltip flotante al pasar el ratón */}
+                                                    <div className="hidden group-hover:block absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white p-2.5 rounded-xl shadow-2xl z-30 w-44 text-[10px] pointer-events-none">
+                                                        <p className="font-bold">{p.name}</p>
+                                                        <p className="italic font-mono text-gray-400 mt-0.5">{p.scientificName}</p>
+                                                        <p className="text-emerald-400 font-semibold mt-1">{p.alt} msnm • {p.phase}</p>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+
+                                    <div className="relative z-10 bg-emerald-900/60 border border-emerald-800 p-4 rounded-2xl flex flex-wrap gap-4 items-center justify-between text-xs">
+                                        <div className="flex gap-4">
+                                            <span className="flex items-center gap-1.5 text-emerald-300">
+                                                <span className="w-2.5 h-2.5 bg-emerald-400 rounded-full inline-block"></span>
+                                                Sotobosque Conservado
+                                            </span>
+                                            <span className="flex items-center gap-1.5 text-emerald-300">
+                                                <span className="w-2.5 h-2.5 bg-amber-500 rounded-full inline-block"></span>
+                                                Zona Limítrofe / Amenazada
+                                            </span>
+                                        </div>
+                                        <span className="text-emerald-400 font-mono font-bold">Precisión promedio: ±8 metros</span>
+                                    </div>
+                                </div>
+                            </section>
+                        )}
+                    </main>
+
+                    {/* MENÚ DE NAVEGACIÓN INFERIOR (ESTILO MOBILE FIRST) */}
+                    <nav className="fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 px-6 py-3 shadow-2xl z-40 md:sticky md:bottom-auto md:top-auto md:border-b md:border-t-0 md:shadow-none md:mt-8">
+                        <div className="max-w-xl mx-auto flex items-center justify-between">
+                            <button 
+                                onClick={() => setActiveTab("capture")}
+                                className={`flex flex-col items-center gap-1 text-xs font-bold transition-all ${
+                                    activeTab === "capture" ? "text-emerald-800 scale-105" : "text-gray-400 hover:text-gray-600"
+                                }`}
+                            >
+                                <i data-lucide="camera" className="w-5 h-5"></i>
+                                <span>1. Capturar</span>
+                            </button>
+
+                            <button 
+                                onClick={() => setActiveTab("inventory")}
+                                className={`flex flex-col items-center gap-1 text-xs font-bold transition-all ${
+                                    activeTab === "inventory" ? "text-emerald-800 scale-105" : "text-gray-400 hover:text-gray-600"
+                                }`}
+                            >
+                                <i data-lucide="clipboard-list" className="w-5 h-5"></i>
+                                <span>2. Inventario</span>
+                            </button>
+
+                            <button 
+                                onClick={() => setActiveTab("map")}
+                                className={`flex flex-col items-center gap-1 text-xs font-bold transition-all ${
+                                    activeTab === "map" ? "text-emerald-800 scale-105" : "text-gray-400 hover:text-gray-600"
+                                }`}
+                            >
+                                <i data-lucide="map" className="w-5 h-5"></i>
+                                <span>3. Ver Mapa</span>
+                            </button>
+                        </div>
+                    </nav>
+                </div>
+            );
+        }
+
+        // Renderizar la app en el div 'root'
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
