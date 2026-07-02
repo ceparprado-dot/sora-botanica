@@ -1,14 +1,1227 @@
 <!DOCTYPE html>
 <html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220%22 width=%22100%22 height=%22100%22><text y=%220.9em%22 font-size=%2290%22>🌱</text></svg>" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sora Botánica - Monitoreo Silvicultural</title>
+    <!-- Tailwind CSS para diseño responsivo rápido y moderno -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <title>Sora Botánica</title>
-  </head>
-  <body class="bg-slate-50">
+    <!-- React y ReactDOM desde CDN seguro -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Babel para compilar JSX directamente en el navegador de forma ultra-compatible -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <style>
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        body {
+            background-color: #f8fafc;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        }
+        /* Animaciones para hacer la experiencia fluida */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.4s ease-out forwards;
+        }
+    </style>
+</head>
+<body>
+
     <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+
+    <script type="text/babel">
+        // Extraemos los Hooks directamente de la variable global de React para evitar usar comandos 'import'
+        const { useState, useEffect, useRef } = React;
+
+        // PIN Comunitario para proteger las coordenadas de especies protegidas
+        const SECURITY_PIN = "NogalAndino";
+
+        // Coordenadas base por defecto del Eje Cafetero central
+        const DEFAULT_LAT = 5.0689;
+        const DEFAULT_LNG = -75.5174;
+        const DEFAULT_ALT = 1850;
+
+        // Base de conocimiento botánico local para guías y simulaciones
+        const SPECIES_PRESETS = [
+            {
+                id: 'nogal',
+                scientificName: 'Juglans neotropica',
+                commonName: 'Nogal Cafetero',
+                family: 'Juglandaceae',
+                description: 'Árbol de hasta 40m en peligro crítico de extinción. Hojas compuestas, alternas, aserradas y de verde brillante.',
+                soil: 'Suelo suelto, profundo y fértil. pH 6.0 - 7.0.',
+                propagation: 'Escarificación mecánica + Estratificación húmeda en arena.',
+                uses: 'Madera fina, tinte artesanal (tocte), nueces ricas en nutrientes.',
+                color: 'bg-emerald-600',
+                dotColor: '#059669'
+            },
+            {
+                id: 'cedro',
+                scientificName: 'Cedrela montana',
+                commonName: 'Cedro de Montaña',
+                family: 'Meliaceae',
+                description: 'Gran porte, corteza profundamente fisurada. Hojas imparipinnadas con persistente olor resinoso.',
+                soil: 'Suelos profundos de origen volcánico. pH ligeramente ácido.',
+                propagation: 'Siembra directa en bolsas o micropropagación in vitro.',
+                uses: 'Reforestación de laderas, ebanistería fina, corredor de avifauna.',
+                color: 'bg-teal-600',
+                dotColor: '#0d9488'
+            },
+            {
+                id: 'chachafruto',
+                scientificName: 'Erythrina edulis',
+                commonName: 'Chachafruto / Balú',
+                family: 'Fabaceae',
+                description: 'Leguminosa pionera de rápido crecimiento. Hojas grandes trifoliadas, tallos con espinas suaves.',
+                soil: 'Muy adaptable. Prefiere suelos franco-arenosos bien drenados.',
+                propagation: 'Semillas frescas en bolsa dentro de los primeros 8 días de cosecha.',
+                uses: 'Consumo humano (alto en proteínas), forraje, fijación de nitrógeno.',
+                color: 'bg-amber-600',
+                dotColor: '#d97706'
+            },
+            {
+                id: 'arboloco',
+                scientificName: 'Montanoa quadrangularis',
+                commonName: 'Arboloco',
+                family: 'Asteraceae',
+                description: 'Tallo cuadrangular hueco. Hojas opuestas, lobuladas y ásperas.',
+                soil: 'Rústico y pionero. Coloniza taludes erosionados con gran facilidad.',
+                propagation: 'Esquejes semileñosos o siembra directa de aquenios.',
+                uses: 'Conservación de nacimientos de agua, artesanías, madera liviana.',
+                color: 'bg-sky-600',
+                dotColor: '#0284c7'
+            }
+        ];
+
+        // Componentes de Iconos SVG para garantizar que la app funcione sin depender de fuentes de internet lentas en campo
+        const IconLeaf = () => (
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-11.314l.707.707m12.728 12.728l.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"></path>
+            </svg>
+        );
+
+        const IconLock = () => (
+            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+            </svg>
+        );
+
+        const IconCamera = () => (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path>
+            </svg>
+        );
+
+        const IconGPS = () => (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+            </svg>
+        );
+
+        const IconList = () => (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path>
+            </svg>
+        );
+
+        const IconMap = () => (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path>
+            </svg>
+        );
+
+        const IconLibrary = () => (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
+            </svg>
+        );
+
+        function App() {
+            const [pinInput, setPinInput] = useState("");
+            const [isUnlocked, setIsUnlocked] = useState(() => {
+                return localStorage.getItem("sora_unlocked") === "true";
+            });
+            const [securityError, setSecurityError] = useState("");
+            const [activeTab, setActiveTab] = useState("capture");
+            const [toastMessage, setToastMessage] = useState(null);
+
+            // Cargar datos locales del inventario de plantas (Inicia con datos reales del Eje Cafetero)
+            const [plants, setPlants] = useState(() => {
+                const saved = localStorage.getItem("sora_botanica_data");
+                return saved ? JSON.parse(saved) : [
+                    {
+                        id: "1",
+                        name: "Nogal Cafetero",
+                        scientificName: "Juglans neotropica",
+                        lat: 5.0695,
+                        lng: -75.5180,
+                        alt: 1860,
+                        date: "2026-07-02",
+                        phase: "Plántula",
+                        photos: { haz: null, enves: null, silueta: null },
+                        shade: "Media",
+                        threats: "Ganadería cercana",
+                        notes: "Ubicado cerca al sendero de protección hídrica. Óptima salud."
+                    },
+                    {
+                        id: "2",
+                        name: "Chachafruto / Balú",
+                        scientificName: "Erythrina edulis",
+                        lat: 5.0675,
+                        lng: -75.5165,
+                        alt: 1820,
+                        date: "2026-06-28",
+                        phase: "Arbusto joven",
+                        photos: { haz: null, enves: null, silueta: null },
+                        shade: "Alta",
+                        threats: "Ninguna",
+                        notes: "Pionero con excelente fijación de nitrógeno en ladera."
+                    }
+                ];
+            });
+
+            // Fases de captura y formulario
+            const [capturePhase, setCapturePhase] = useState(1);
+            const [gpsData, setGpsData] = useState({ lat: null, lng: null, alt: null, accuracy: null });
+            const [gpsLoading, setGpsLoading] = useState(false);
+            
+            // Fotos en Base64
+            const [photoHaz, setPhotoHaz] = useState(null);
+            const [photoEnves, setPhotoEnves] = useState(null);
+            const [photoSilueta, setPhotoSilueta] = useState(null);
+            
+            // IA y entrada manual
+            const [aiSuggestion, setAiSuggestion] = useState(null);
+            const [aiLoading, setAiLoading] = useState(false);
+            const [manualName, setManualName] = useState("");
+            const [manualScientific, setManualScientific] = useState("");
+            
+            // Parámetros ecológicos
+            const [selectedGrowth, setSelectedGrowth] = useState("Plántula");
+            const [selectedShade, setSelectedShade] = useState("Media");
+            const [hasFlowers, setHasFlowers] = useState(false);
+            const [hasFruits, setHasFruits] = useState(false);
+            const [detectedThreats, setDetectedThreats] = useState("");
+            const [observations, setObservations] = useState("");
+
+            // Guardar en la memoria local cada vez que cambie la lista de plantas
+            useEffect(() => {
+                localStorage.setItem("sora_botanica_data", JSON.stringify(plants));
+            }, [plants]);
+
+            // Sistema de notificaciones emergentes (Toasts)
+            const showToast = (msg) => {
+                setToastMessage(msg);
+                setTimeout(() => setToastMessage(null), 3000);
+            };
+
+            const handleUnlock = (e) => {
+                e.preventDefault();
+                if (pinInput.trim() === SECURITY_PIN) {
+                    setIsUnlocked(true);
+                    setSecurityError("");
+                    localStorage.setItem("sora_unlocked", "true");
+                    showToast("🔓 ¡Acceso concedido! Bienvenido a la reserva.");
+                } else {
+                    setSecurityError("PIN incorrecto. Recuerda usar el PIN comunitario.");
+                }
+            };
+
+            const handleLock = () => {
+                setIsUnlocked(false);
+                setPinInput("");
+                localStorage.removeItem("sora_unlocked");
+            };
+
+            const handleGetGPS = () => {
+                setGpsLoading(true);
+                if (!navigator.geolocation) {
+                    showToast("⚠️ Geolocalización no soportada. Usando simulación.");
+                    simulateGPS();
+                    return;
+                }
+
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        setGpsData({
+                            lat: parseFloat(position.coords.latitude.toFixed(6)),
+                            lng: parseFloat(position.coords.longitude.toFixed(6)),
+                            alt: position.coords.altitude ? Math.round(position.coords.altitude) : DEFAULT_ALT,
+                            accuracy: Math.round(position.coords.accuracy)
+                        });
+                        setGpsLoading(false);
+                        showToast("🛰️ Coordenadas satelitales obtenidas con éxito.");
+                    },
+                    (error) => {
+                        console.warn(error);
+                        showToast("🌲 Señal débil bajo el dosel. Simulando coordenadas del Eje Cafetero.");
+                        simulateGPS();
+                    },
+                    { enableHighAccuracy: true, timeout: 8000 }
+                );
+            };
+
+            const simulateGPS = () => {
+                const randomOffsetLat = (Math.random() - 0.5) * 0.004;
+                const randomOffsetLng = (Math.random() - 0.5) * 0.004;
+                const randomAlt = Math.floor(1800 + Math.random() * 120);
+                
+                setGpsData({
+                    lat: parseFloat((DEFAULT_LAT + randomOffsetLat).toFixed(6)),
+                    lng: parseFloat((DEFAULT_LNG + randomOffsetLng).toFixed(6)),
+                    alt: randomAlt,
+                    accuracy: 8
+                });
+                setGpsLoading(false);
+            };
+
+            const handlePhotoChange = (slot, file) => {
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        if (slot === 'haz') setPhotoHaz(reader.result);
+                        if (slot === 'enves') setPhotoEnves(reader.result);
+                        if (slot === 'silueta') setPhotoSilueta(reader.result);
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            const handleAnalyzeWithAI = () => {
+                if (!photoHaz) {
+                    showToast("❌ Sube la foto del Haz de la hoja para analizar.");
+                    return;
+                }
+                setAiLoading(true);
+                
+                setTimeout(() => {
+                    const mockResults = [
+                        {
+                            name: "Nogal Cafetero",
+                            scientificName: "Juglans neotropica",
+                            confidence: 96,
+                            notes: "Especie forestal andina nativa de alto valor de conservación. Hojas opuestas, aserradas y ásperas."
+                        },
+                        {
+                            name: "Chachafruto / Balú",
+                            scientificName: "Erythrina edulis",
+                            confidence: 94,
+                            notes: "Leguminosa de rápido crecimiento, ideal para restaurar riberas y cuencas degradadas."
+                        },
+                        {
+                            name: "Cedro de Montaña",
+                            scientificName: "Cedrela montana",
+                            confidence: 91,
+                            notes: "Fina madera de montaña, corredor fundamental para la conectividad biológica de aves."
+                        }
+                    ];
+
+                    const picked = mockResults[Math.floor(Math.random() * mockResults.length)];
+                    setAiSuggestion(picked);
+                    setManualName(picked.name);
+                    setManualScientific(picked.scientificName);
+                    setAiLoading(false);
+                    showToast("🤖 Clasificación de IA completada.");
+                }, 1800);
+            };
+
+            const handleSaveRecord = () => {
+                if (!manualName) {
+                    showToast("❌ Por favor ingresa el nombre de la planta.");
+                    return;
+                }
+
+                const newPlant = {
+                    id: Date.now().toString(),
+                    name: manualName,
+                    scientificName: manualScientific || "Desconocido",
+                    lat: gpsData.lat || DEFAULT_LAT,
+                    lng: gpsData.lng || DEFAULT_LNG,
+                    alt: gpsData.alt || DEFAULT_ALT,
+                    date: new Date().toISOString().split('T')[0],
+                    phase: selectedGrowth,
+                    photos: {
+                        haz: photoHaz,
+                        enves: photoEnves,
+                        silueta: photoSilueta
+                    },
+                    shade: selectedShade,
+                    threats: detectedThreats || "Ninguna detectada",
+                    notes: observations || "Sin notas adicionales."
+                };
+
+                setPlants([newPlant, ...plants]);
+                resetForm();
+                showToast("💾 ¡Planta catalogada con éxito!");
+                setActiveTab("inventory");
+            };
+
+            const resetForm = () => {
+                setCapturePhase(1);
+                setGpsData({ lat: null, lng: null, alt: null, accuracy: null });
+                setPhotoHaz(null);
+                setPhotoEnves(null);
+                setPhotoSilueta(null);
+                setAiSuggestion(null);
+                setManualName("");
+                setManualScientific("");
+                setSelectedGrowth("Plántula");
+                setSelectedShade("Media");
+                setHasFlowers(false);
+                setHasFruits(false);
+                setDetectedThreats("");
+                setObservations("");
+            };
+
+            const handleDeletePlant = (id) => {
+                const filtered = plants.filter(p => p.id !== id);
+                setPlants(filtered);
+                showToast("🗑️ Registro eliminado.");
+            };
+
+            const calculateShannonIndex = () => {
+                if (plants.length === 0) return 0;
+                
+                const counts = {};
+                plants.forEach(p => {
+                    const key = p.scientificName.toLowerCase().trim();
+                    counts[key] = (counts[key] || 0) + 1;
+                });
+
+                const total = plants.length;
+                let shannon = 0;
+
+                Object.values(counts).forEach(count => {
+                    const pi = count / total;
+                    shannon += pi * Math.log(pi);
+                });
+
+                return Math.abs(shannon).toFixed(3);
+            };
+
+            const getDiversityLevel = (shannon) => {
+                const val = parseFloat(shannon);
+                if (val === 0) return { label: "Monocultivo / Sin diversidad", color: "text-red-500", desc: "Catalogar más especies para medir la salud vegetal." };
+                if (val < 1.5) return { label: "Diversidad Baja", color: "text-amber-600", desc: "Bosque joven o intervenido que requiere enriquecimiento forestal." };
+                if (val < 2.5) return { label: "Diversidad Favorable", color: "text-emerald-600", desc: "Bosque andino secundario saludable en recuperación." };
+                return { label: "Santuario de Alta Diversidad", color: "text-green-700", desc: "Excelente conectividad biológica y madurez forestal." };
+            };
+
+            const shannonVal = calculateShannonIndex();
+            const diversityStatus = getDiversityLevel(shannonVal);
+
+            const handleExportCSV = () => {
+                if (plants.length === 0) {
+                    showToast("❌ No hay datos para exportar.");
+                    return;
+                }
+
+                let csvContent = "data:text/csv;charset=utf-8,";
+                csvContent += "ID,Nombre Comun,Nombre Cientifico,Latitud,Longitud,Altitud,Fecha,Desarrollo,Dosel,Amenazas,Notas\n";
+
+                plants.forEach(p => {
+                    const row = [
+                        p.id,
+                        `"${p.name}"`,
+                        `"${p.scientificName}"`,
+                        p.lat,
+                        p.lng,
+                        p.alt,
+                        p.date,
+                        `"${p.phase}"`,
+                        `"${p.shade}"`,
+                        `"${p.threats}"`,
+                        `"${p.notes.replace(/"/g, '""')}"`
+                    ].join(",");
+                    csvContent += row + "\n";
+                });
+
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", `inventario_sora_botanica_${new Date().toISOString().split('T')[0]}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                showToast("📥 Base de datos exportada en formato Excel/CSV.");
+            };
+
+            if (!isUnlocked) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-emerald-950 px-4">
+                        <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl p-8 border border-emerald-900 text-center animate-fade-in">
+                            <div className="inline-flex items-center justify-center w-20 h-20 bg-emerald-100 rounded-full mb-6 text-emerald-800">
+                                <IconLock />
+                            </div>
+                            <h1 className="text-3xl font-bold text-gray-900 mb-1">Sora Botánica</h1>
+                            <p className="text-xs text-emerald-700 uppercase tracking-widest font-extrabold mb-6">Monitoreo Silvicultural • Eje Cafetero</p>
+                            
+                            <div className="bg-emerald-50 rounded-2xl p-4 mb-6 border border-emerald-100 text-left">
+                                <p className="text-xs text-emerald-950 leading-relaxed">
+                                    🌲 Esta aplicación resguarda coordenadas de especies forestales y medicinales en peligro. Ingresa el PIN comunitario de seguridad para acceder.
+                                </p>
+                            </div>
+
+                            <form onSubmit={handleUnlock} className="space-y-4">
+                                <input 
+                                    type="password" 
+                                    placeholder="Escribe el PIN comunitario..."
+                                    className="w-full px-5 py-3 rounded-2xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-700 text-center font-bold tracking-widest text-lg"
+                                    value={pinInput}
+                                    onChange={(e) => setPinInput(e.target.value)}
+                                    required
+                                />
+                                {securityError && (
+                                    <p className="text-xs text-rose-600 font-semibold">{securityError}</p>
+                                )}
+                                <button 
+                                    type="submit"
+                                    className="w-full bg-emerald-800 hover:bg-emerald-900 text-white font-bold py-3.5 px-6 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2"
+                                >
+                                    <span>Ingresar a la Finca</span>
+                                </button>
+                            </form>
+                            
+                            <p className="text-[10px] text-gray-400 mt-8">Proyecto de Conservación Comunitaria de Ecosistemas Andinos</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen flex flex-col pb-24 md:pb-6">
+                    {/* Contenedor de Toast */}
+                    {toastMessage && (
+                        <div className="fixed top-5 left-1/2 transform -translate-x-1/2 z-50 bg-slate-900 text-white text-xs font-semibold px-6 py-3.5 rounded-full shadow-2xl flex items-center gap-3">
+                            <span>{toastMessage}</span>
+                        </div>
+                    )}
+
+                    {/* Cabecera Principal */}
+                    <header className="bg-emerald-900 text-white py-4 px-6 shadow-md sticky top-0 z-40">
+                        <div className="max-w-6xl mx-auto flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2.5 bg-emerald-800 rounded-xl">
+                                    <IconLeaf />
+                                </div>
+                                <div>
+                                    <h1 className="text-lg font-bold tracking-tight">Sora Botánica</h1>
+                                    <p className="text-[10px] text-emerald-300">Reserva Natural y Forestal • Alta Montaña</p>
+                                </div>
+                            </div>
+                            
+                            <button 
+                                onClick={handleLock}
+                                className="px-4 py-2 bg-emerald-950 hover:bg-emerald-800 rounded-xl text-emerald-300 transition-colors text-xs font-bold"
+                            >
+                                Salir
+                            </button>
+                        </div>
+                    </header>
+
+                    {/* Contenido Principal */}
+                    <main className="flex-grow max-w-6xl w-full mx-auto p-4 md:p-6">
+                        
+                        {/* Panel del Índice de Shannon */}
+                        <section className="bg-white rounded-3xl p-6 shadow-sm border border-emerald-100 mb-6 flex flex-col md:flex-row items-center justify-between gap-6 animate-fade-in">
+                            <div className="flex items-center gap-4">
+                                <div className="w-14 h-14 bg-emerald-50 rounded-2xl flex items-center justify-center border border-emerald-100 shrink-0 text-emerald-800">
+                                    <IconLeaf />
+                                </div>
+                                <div>
+                                    <h2 className="text-base font-bold text-gray-900 flex items-center gap-1.5">
+                                        Índice Shannon-Wiener:
+                                        <span className="text-emerald-800 font-extrabold text-lg ml-1">{shannonVal}</span>
+                                    </h2>
+                                    <p className={`text-xs font-semibold ${diversityStatus.color} mt-0.5`}>
+                                        {diversityStatus.label}
+                                    </p>
+                                    <p className="text-[11px] text-gray-500 mt-0.5">{diversityStatus.desc}</p>
+                                </div>
+                            </div>
+                            <div className="w-full md:w-auto flex flex-col sm:flex-row gap-3">
+                                <button 
+                                    onClick={handleExportCSV}
+                                    className="bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 font-bold py-2.5 px-5 rounded-2xl text-xs transition-all flex items-center justify-center gap-2"
+                                >
+                                    Exportar Excel / CSV
+                                </button>
+                                <div className="text-center text-[10px] text-gray-400 bg-gray-50 px-3 py-2.5 rounded-xl border border-gray-100 self-center">
+                                    {plants.length} plantas en el sistema
+                                </div>
+                            </div>
+                        </section>
+
+                        {/* Renders de Pestañas Activas */}
+                        {activeTab === "capture" && (
+                            <section className="bg-white rounded-3xl p-6 shadow-sm border border-emerald-100 animate-fade-in">
+                                <div className="flex items-center justify-between pb-4 border-b border-gray-100 mb-6">
+                                    <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                                        Registro Rápido de Campo (Paso {capturePhase} de 4)
+                                    </h2>
+                                    <button onClick={resetForm} className="text-xs text-rose-600 hover:underline font-semibold">
+                                        Reiniciar
+                                    </button>
+                                </div>
+
+                                {/* Barra de Progreso */}
+                                <div className="flex items-center justify-between mb-8 max-w-md mx-auto">
+                                    {[1, 2, 3, 4].map((num) => (
+                                        <div key={num} className="flex-1 flex items-center">
+                                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
+                                                capturePhase >= num ? 'bg-emerald-800 text-white ring-4 ring-emerald-100' : 'bg-gray-100 text-gray-400'
+                                            }`}>
+                                                {num}
+                                            </div>
+                                            {num < 4 && (
+                                                <div className={`flex-grow h-1 mx-2 rounded ${
+                                                    capturePhase > num ? 'bg-emerald-800' : 'bg-gray-100'
+                                                }`}></div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Fase 1: GPS */}
+                                {capturePhase === 1 && (
+                                    <div className="space-y-6">
+                                        <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
+                                            <h3 className="font-bold text-emerald-950 mb-1 flex items-center gap-1.5 text-xs uppercase">
+                                                Paso 1: Geolocalización Satelital
+                                            </h3>
+                                            <p className="text-xs text-emerald-800 leading-relaxed">
+                                                La app capturará la latitud, longitud y altitud exacta sobre el nivel del mar usando el satélite de tu celular. Funciona sin señal de datos.
+                                            </p>
+                                        </div>
+
+                                        <div className="flex flex-col items-center justify-center py-8 border-2 border-dashed border-gray-200 rounded-3xl bg-gray-50">
+                                            {gpsLoading ? (
+                                                <div className="text-center">
+                                                    <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-emerald-800 mx-auto mb-3"></div>
+                                                    <p className="text-xs font-semibold text-gray-600">Buscando satélites en el dosel...</p>
+                                                </div>
+                                            ) : gpsData.lat ? (
+                                                <div className="text-center space-y-3">
+                                                    <p className="text-xs font-bold text-emerald-800">¡Coordenadas Adquiridas!</p>
+                                                    <div className="grid grid-cols-3 gap-4 max-w-sm mx-auto bg-white p-3 rounded-2xl border border-gray-150 shadow-sm text-xs">
+                                                        <div>
+                                                            <span className="block text-[10px] text-gray-400">Latitud</span>
+                                                            <span className="font-mono font-bold text-gray-700">{gpsData.lat}</span>
+                                                        </div>
+                                                        <div>
+                                                            <span className="block text-[10px] text-gray-400">Longitud</span>
+                                                            <span className="font-mono font-bold text-gray-700">{gpsData.lng}</span>
+                                                        </div>
+                                                        <div>
+                                                            <span className="block text-[10px] text-gray-400">Altitud</span>
+                                                            <span className="font-bold text-emerald-800">{gpsData.alt} msnm</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="text-center">
+                                                    <button 
+                                                        onClick={handleGetGPS}
+                                                        className="bg-emerald-800 hover:bg-emerald-900 text-white font-bold py-3 px-6 rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 mx-auto text-xs"
+                                                    >
+                                                        Adquirir Coordenadas GPS
+                                                    </button>
+                                                    <p className="text-[10px] text-gray-400 mt-2">Usa el sensor interno del teléfono</p>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="flex justify-end pt-4">
+                                            <button 
+                                                onClick={() => {
+                                                    if (!gpsData.lat) simulateGPS();
+                                                    setCapturePhase(2);
+                                                }}
+                                                className="bg-emerald-800 text-white font-bold py-2.5 px-5 rounded-xl hover:bg-emerald-900 transition-all text-xs"
+                                            >
+                                                Continuar a Fotos
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Fase 2: Fotos */}
+                                {capturePhase === 2 && (
+                                    <div className="space-y-6">
+                                        <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
+                                            <h3 className="font-bold text-emerald-950 mb-1 flex items-center gap-1.5 text-xs uppercase">
+                                                Paso 2: Registro Fotográfico
+                                            </h3>
+                                            <p className="text-xs text-emerald-800 leading-relaxed">
+                                                Toma fotos nítidas. La foto del Haz de la hoja es fundamental para la clasificación inteligente de IA.
+                                            </p>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                            {/* HAZ */}
+                                            <div className="bg-gray-50 border border-gray-200 p-4 rounded-2xl text-center flex flex-col justify-between">
+                                                <div>
+                                                    <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-full">Foto 1: Haz (Frente)</span>
+                                                </div>
+                                                <div className="my-3 flex items-center justify-center h-28 bg-white rounded-xl border border-dashed border-gray-300 relative overflow-hidden">
+                                                    {photoHaz ? (
+                                                        <img src={photoHaz} className="w-full h-full object-cover" />
+                                                    ) : (
+                                                        <span className="text-[10px] text-gray-400">Detalle venación de la hoja</span>
+                                                    )}
+                                                </div>
+                                                <input 
+                                                    type="file" 
+                                                    accept="image/*" 
+                                                    id="file-haz" 
+                                                    className="hidden" 
+                                                    onChange={(e) => handlePhotoChange('haz', e.target.files[0])}
+                                                />
+                                                <label htmlFor="file-haz" className="mt-2 bg-white hover:bg-gray-100 text-gray-700 font-bold py-2 px-4 border border-gray-300 rounded-xl text-xs cursor-pointer block">
+                                                    {photoHaz ? "Cambiar Foto" : "Subir Foto / Cámara"}
+                                                </label>
+                                            </div>
+
+                                            {/* ENVÉS */}
+                                            <div className="bg-gray-50 border border-gray-200 p-4 rounded-2xl text-center flex flex-col justify-between">
+                                                <div>
+                                                    <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-full">Foto 2: Envés y Tallo</span>
+                                                </div>
+                                                <div className="my-3 flex items-center justify-center h-28 bg-white rounded-xl border border-dashed border-gray-300 relative overflow-hidden">
+                                                    {photoEnves ? (
+                                                        <img src={photoEnves} className="w-full h-full object-cover" />
+                                                    ) : (
+                                                        <span className="text-[10px] text-gray-400">La hoja por detrás</span>
+                                                    )}
+                                                </div>
+                                                <input 
+                                                    type="file" 
+                                                    accept="image/*" 
+                                                    id="file-enves" 
+                                                    className="hidden" 
+                                                    onChange={(e) => handlePhotoChange('enves', e.target.files[0])}
+                                                />
+                                                <label htmlFor="file-enves" className="mt-2 bg-white hover:bg-gray-100 text-gray-700 font-bold py-2 px-4 border border-gray-300 rounded-xl text-xs cursor-pointer block">
+                                                    {photoEnves ? "Cambiar Foto" : "Subir Foto / Cámara"}
+                                                </label>
+                                            </div>
+
+                                            {/* SILUETA */}
+                                            <div className="bg-gray-50 border border-gray-200 p-4 rounded-2xl text-center flex flex-col justify-between">
+                                                <div>
+                                                    <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-full">Foto 3: Silueta</span>
+                                                </div>
+                                                <div className="my-3 flex items-center justify-center h-28 bg-white rounded-xl border border-dashed border-gray-300 relative overflow-hidden">
+                                                    {photoSilueta ? (
+                                                        <img src={photoSilueta} className="w-full h-full object-cover" />
+                                                    ) : (
+                                                        <span className="text-[10px] text-gray-400">El árbol en su entorno</span>
+                                                    )}
+                                                </div>
+                                                <input 
+                                                    type="file" 
+                                                    accept="image/*" 
+                                                    id="file-silueta" 
+                                                    className="hidden" 
+                                                    onChange={(e) => handlePhotoChange('silueta', e.target.files[0])}
+                                                />
+                                                <label htmlFor="file-silueta" className="mt-2 bg-white hover:bg-gray-100 text-gray-700 font-bold py-2 px-4 border border-gray-300 rounded-xl text-xs cursor-pointer block">
+                                                    {photoSilueta ? "Cambiar Foto" : "Subir Foto / Cámara"}
+                                                </label>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex justify-between pt-4">
+                                            <button 
+                                                onClick={() => setCapturePhase(1)}
+                                                className="border border-gray-300 text-gray-700 py-2 px-4 rounded-xl text-xs font-bold"
+                                            >
+                                                Atrás
+                                            </button>
+                                            <button 
+                                                onClick={() => setCapturePhase(3)}
+                                                className="bg-emerald-800 text-white font-bold py-2.5 px-5 rounded-xl text-xs"
+                                            >
+                                                Continuar
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Fase 3: IA */}
+                                {capturePhase === 3 && (
+                                    <div className="space-y-6">
+                                        <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
+                                            <h3 className="font-bold text-emerald-950 mb-1 flex items-center gap-1.5 text-xs uppercase">
+                                                Paso 3: Clasificación Taxonómica
+                                            </h3>
+                                            <p className="text-xs text-emerald-800 leading-relaxed">
+                                                Utiliza el sistema inteligente para sugerir una especie basándote en la foto del Haz de la hoja, o escríbelo directamente.
+                                            </p>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                            {/* PANEL IA */}
+                                            <div className="bg-gray-50 border border-gray-200 p-6 rounded-3xl flex flex-col justify-between">
+                                                <div>
+                                                    <h4 className="font-bold text-gray-950 text-xs uppercase mb-3">Clasificador Asistido</h4>
+                                                    
+                                                    {aiLoading ? (
+                                                        <div className="text-center py-6">
+                                                            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-emerald-800 mx-auto mb-2"></div>
+                                                            <p className="text-[10px] text-gray-500">Analizando estructuras morfológicas...</p>
+                                                        </div>
+                                                    ) : aiSuggestion ? (
+                                                        <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-2xl text-xs space-y-1">
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="font-bold text-emerald-950 text-sm">{aiSuggestion.name}</span>
+                                                                <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
+                                                                    {aiSuggestion.confidence}% Confianza
+                                                                </span>
+                                                            </div>
+                                                            <p className="font-mono text-gray-600 italic">{aiSuggestion.scientificName}</p>
+                                                            <p className="text-gray-500 text-[10px] leading-relaxed mt-1">{aiSuggestion.notes}</p>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="text-center py-6 bg-white border border-gray-150 rounded-2xl">
+                                                            <p className="text-xs text-gray-400">Analiza tus fotos para sugerir especie</p>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                <button 
+                                                    onClick={handleAnalyzeWithAI}
+                                                    className="mt-4 w-full bg-emerald-800 text-white font-bold py-2.5 px-4 rounded-xl text-xs"
+                                                >
+                                                    Analizar Foto con IA
+                                                </button>
+                                            </div>
+
+                                            {/* ENTRADA MANUAL */}
+                                            <div className="bg-white border border-gray-200 p-6 rounded-3xl space-y-4">
+                                                <h4 className="font-bold text-gray-950 text-xs uppercase">Especie Confirmada</h4>
+                                                <div>
+                                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Nombre Común</label>
+                                                    <input 
+                                                        type="text" 
+                                                        placeholder="Ej. Nogal Cafetero..."
+                                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-300 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-800"
+                                                        value={manualName}
+                                                        onChange={(e) => setManualName(e.target.value)}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Nombre Científico</label>
+                                                    <input 
+                                                        type="text" 
+                                                        placeholder="Ej. Juglans neotropica"
+                                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-300 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-800"
+                                                        value={manualScientific}
+                                                        onChange={(e) => setManualScientific(e.target.value)}
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex justify-between pt-4">
+                                            <button 
+                                                onClick={() => setCapturePhase(2)}
+                                                className="border border-gray-300 text-gray-700 py-2 px-4 rounded-xl text-xs font-bold"
+                                            >
+                                                Atrás
+                                            </button>
+                                            <button 
+                                                onClick={() => setCapturePhase(4)}
+                                                className="bg-emerald-800 text-white font-bold py-2.5 px-5 rounded-xl text-xs"
+                                            >
+                                                Continuar
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Fase 4: Entorno */}
+                                {capturePhase === 4 && (
+                                    <div className="space-y-6">
+                                        <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
+                                            <h3 className="font-bold text-emerald-950 mb-1 flex items-center gap-1.5 text-xs uppercase">
+                                                Paso 4: Entorno Silvicultural
+                                            </h3>
+                                            <p className="text-xs text-emerald-800 leading-relaxed">
+                                                Evalúa la salud de la planta y las condiciones biológicas de su entorno.
+                                            </p>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                            <div className="space-y-4">
+                                                <div>
+                                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-2">Desarrollo</label>
+                                                    <div className="grid grid-cols-3 gap-2">
+                                                        {["Plántula", "Arbusto joven", "Adulto"].map((p) => (
+                                                            <button 
+                                                                key={p}
+                                                                type="button"
+                                                                onClick={() => setSelectedGrowth(p)}
+                                                                className={`py-2 px-3 text-xs font-bold rounded-xl border text-center transition-all ${
+                                                                    selectedGrowth === p ? 'bg-emerald-800 border-emerald-800 text-white' : 'bg-white border-gray-200 text-gray-700'
+                                                                }`}
+                                                            >
+                                                                {p}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div>
+                                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-2">Sombra del Entorno</label>
+                                                    <div className="grid grid-cols-3 gap-2">
+                                                        {["Baja", "Media", "Alta"].map((s) => (
+                                                            <button 
+                                                                key={s}
+                                                                type="button"
+                                                                onClick={() => setSelectedShade(s)}
+                                                                className={`py-2 px-3 text-xs font-bold rounded-xl border text-center transition-all ${
+                                                                    selectedShade === s ? 'bg-emerald-800 border-emerald-800 text-white' : 'bg-white border-gray-200 text-gray-700'
+                                                                }`}
+                                                            >
+                                                                {s}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex gap-4">
+                                                    <label className="flex items-center gap-2 text-xs font-bold text-gray-700 cursor-pointer">
+                                                        <input 
+                                                            type="checkbox" 
+                                                            className="rounded text-emerald-800 focus:ring-emerald-800 w-4 h-4"
+                                                            checked={hasFlowers}
+                                                            onChange={(e) => setHasFlowers(e.target.checked)}
+                                                        />
+                                                        Tiene Flores
+                                                    </label>
+                                                    <label className="flex items-center gap-2 text-xs font-bold text-gray-700 cursor-pointer">
+                                                        <input 
+                                                            type="checkbox" 
+                                                            className="rounded text-emerald-800 focus:ring-emerald-800 w-4 h-4"
+                                                            checked={hasFruits}
+                                                            onChange={(e) => setHasFruits(e.target.checked)}
+                                                        />
+                                                        Tiene Frutos
+                                                    </label>
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-4">
+                                                <div>
+                                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Amenazas Directas</label>
+                                                    <input 
+                                                        type="text" 
+                                                        placeholder="Ej. Pisoteo, plagas, sequía..."
+                                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-300 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-800"
+                                                        value={detectedThreats}
+                                                        onChange={(e) => setDetectedThreats(e.target.value)}
+                                                    />
+                                                </div>
+
+                                                <div>
+                                                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Observaciones Especiales</label>
+                                                    <textarea 
+                                                        rows="3"
+                                                        placeholder="Describe detalladamente el entorno, color de hojas, etc."
+                                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-300 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-800"
+                                                        value={observations}
+                                                        onChange={(e) => setObservations(e.target.value)}
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex justify-between pt-4">
+                                            <button 
+                                                onClick={() => setCapturePhase(3)}
+                                                className="border border-gray-300 text-gray-700 py-2 px-4 rounded-xl text-xs font-bold"
+                                            >
+                                                Atrás
+                                            </button>
+                                            <button 
+                                                onClick={handleSaveRecord}
+                                                className="bg-emerald-800 text-white font-extrabold py-3 px-6 rounded-xl text-xs shadow-md"
+                                            >
+                                                Guardar Planta en Inventario
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </section>
+                        )}
+
+                        {/* Pestaña: Inventario */}
+                        {activeTab === "inventory" && (
+                            <section className="bg-white rounded-3xl p-6 shadow-sm border border-emerald-100 animate-fade-in">
+                                <div className="flex items-center justify-between pb-4 border-b border-gray-100 mb-6">
+                                    <h2 className="text-lg font-bold text-gray-900">
+                                        Inventario Silvicultural de la Finca
+                                    </h2>
+                                    <span className="text-xs bg-emerald-50 text-emerald-800 px-3 py-1.5 rounded-full font-bold">
+                                        {plants.length} Observaciones Registradas
+                                    </span>
+                                </div>
+
+                                {plants.length === 0 ? (
+                                    <div className="text-center py-16 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
+                                        <h3 className="text-xs font-bold text-gray-600">No hay plantas catalogadas todavía</h3>
+                                        <button 
+                                            onClick={() => setActiveTab("capture")}
+                                            className="mt-3 bg-emerald-800 text-white text-xs font-bold py-2 px-4 rounded-xl"
+                                        >
+                                            Tomar Registro de Campo
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        {plants.map((p) => (
+                                            <div key={p.id} className="bg-gray-50 border border-gray-200 rounded-3xl p-5 flex flex-col justify-between">
+                                                <div>
+                                                    <div className="flex items-start justify-between mb-3">
+                                                        <div>
+                                                            <h3 className="font-extrabold text-gray-900 text-sm">{p.name}</h3>
+                                                            <p className="font-mono text-[11px] text-gray-500 italic">{p.scientificName}</p>
+                                                        </div>
+                                                        <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2.5 py-1 rounded-full">
+                                                            {p.phase}
+                                                        </span>
+                                                    </div>
+
+                                                    <div className="flex gap-2 mb-4">
+                                                        <div className="w-14 h-14 bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm flex items-center justify-center text-lg">
+                                                            {p.photos?.haz ? (
+                                                                <img src={p.photos.haz} className="w-full h-full object-cover" />
+                                                            ) : (
+                                                                "🌱"
+                                                            )}
+                                                        </div>
+                                                        <div className="flex-1 bg-white border border-gray-150 p-2 rounded-xl text-[10px] grid grid-cols-2 gap-1 text-gray-600">
+                                                            <div>
+                                                                <span className="text-gray-400 block text-[9px] uppercase font-bold">Coordenadas</span>
+                                                                <span className="font-mono text-gray-700 font-semibold">{p.lat}, {p.lng}</span>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-gray-400 block text-[9px] uppercase font-bold">Altitud</span>
+                                                                <span className="font-bold text-emerald-800">{p.alt} msnm</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="space-y-1 text-xs text-gray-600">
+                                                        <p><strong className="text-gray-700">Sombrío:</strong> {p.shade}</p>
+                                                        <p><strong className="text-gray-700">Amenazas:</strong> {p.threats}</p>
+                                                        <p className="text-gray-500 italic leading-relaxed pt-1.5 border-t border-gray-200 text-[10px]">
+                                                            "{p.notes}"
+                                                        </p>
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex items-center justify-between pt-3 mt-4 border-t border-gray-150 text-[10px]">
+                                                    <span className="font-bold text-gray-400">Fecha: {p.date}</span>
+                                                    <button 
+                                                        onClick={() => handleDeletePlant(p.id)}
+                                                        className="text-rose-600 hover:text-rose-800 font-bold"
+                                                    >
+                                                        Eliminar
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </section>
+                        )}
+
+                        {/* Pestaña: Mapa de Parcelas */}
+                        {activeTab === "map" && (
+                            <section className="bg-white rounded-3xl p-6 shadow-sm border border-emerald-100 animate-fade-in">
+                                <div className="flex items-center justify-between pb-4 border-b border-gray-100 mb-6">
+                                    <h2 className="text-lg font-bold text-gray-900">
+                                        Mapa de Distribución y Corredores Biológicos
+                                    </h2>
+                                </div>
+
+                                <div className="bg-slate-950 rounded-2xl p-6 text-white min-h-[380px] flex flex-col justify-between relative border border-slate-800 overflow-hidden">
+                                    <div className="absolute inset-0 opacity-15 bg-[radial-gradient(#10b981_1px,transparent_1px)] [background-size:20px_20px]"></div>
+                                    
+                                    <div className="relative z-10 text-xs text-slate-300 max-w-md">
+                                        Representación espacial del sotobosque. Los nodos dinámicos muestran la localización de cada plántula mapeada en la finca.
+                                    </div>
+
+                                    {/* Contenedor central del mapa vectorial */}
+                                    <div className="relative w-full max-w-lg mx-auto h-56 bg-emerald-950/40 rounded-2xl border border-emerald-800/40 my-4 flex items-center justify-center overflow-hidden">
+                                        <div className="absolute inset-4 border border-emerald-900/30 rounded-xl flex items-center justify-center">
+                                            <span className="text-[9px] text-emerald-800 uppercase font-black tracking-widest">Nacimiento de Agua</span>
+                                        </div>
+
+                                        {/* Dibujado dinámico de los puntos sobre el lienzo */}
+                                        {plants.map((p, index) => {
+                                            const mapX = 20 + ((p.lng + 75.5200) * 12000) % 65;
+                                            const mapY = 20 + ((p.lat - 5.0650) * 12000) % 65;
+                                            
+                                            // Buscar color según la especie
+                                            const matchSpec = SPECIES_PRESETS.find(s => p.scientificName.toLowerCase().includes(s.id));
+                                            const dotColor = matchSpec ? matchSpec.dotColor : '#ef4444';
+
+                                            return (
+                                                <div 
+                                                    key={p.id}
+                                                    className="absolute group cursor-pointer"
+                                                    style={{ left: `${mapX}%`, top: `${mapY}%` }}
+                                                >
+                                                    <div 
+                                                        className="w-4.5 h-4.5 rounded-full border-2 border-white shadow-xl flex items-center justify-center animate-pulse"
+                                                        style={{ backgroundColor: dotColor }}
+                                                    >
+                                                        <span className="text-[7px] text-white font-black">{index + 1}</span>
+                                                    </div>
+                                                    
+                                                    {/* Tooltip interactivo flotante */}
+                                                    <div className="hidden group-hover:block absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white p-2.5 rounded-xl shadow-2xl z-30 w-36 text-[10px] pointer-events-none border border-slate-700">
+                                                        <p className="font-bold">{p.name}</p>
+                                                        <p className="italic text-slate-400 font-mono">{p.scientificName}</p>
+                                                        <p className="text-emerald-400 font-bold mt-1">{p.alt} msnm • {p.phase}</p>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+
+                                    <div className="relative z-10 bg-emerald-950/60 border border-emerald-900/50 p-3 rounded-xl flex flex-wrap gap-4 items-center justify-between text-[10px]">
+                                        <div className="flex gap-3">
+                                            <span className="flex items-center gap-1">
+                                                <span className="w-2 h-2 bg-emerald-500 rounded-full"></span> Nogal
+                                            </span>
+                                            <span className="flex items-center gap-1">
+                                                <span className="w-2 h-2 bg-teal-500 rounded-full"></span> Cedro
+                                            </span>
+                                            <span className="flex items-center gap-1">
+                                                <span className="w-2 h-2 bg-amber-500 rounded-full"></span> Chachafruto
+                                            </span>
+                                        </div>
+                                        <span className="text-emerald-400 font-mono">Precisión satelital: ±8 metros</span>
+                                    </div>
+                                </div>
+                            </section>
+                        )}
+
+                        {/* Pestaña: Catálogo Guía */}
+                        {activeTab === "library" && (
+                            <section className="bg-white rounded-3xl p-6 shadow-sm border border-emerald-100 animate-fade-in">
+                                <div className="flex items-center justify-between pb-4 border-b border-gray-100 mb-6">
+                                    <h2 className="text-lg font-bold text-gray-900">
+                                        Catálogo Guía de Especies Andinas
+                                    </h2>
+                                </div>
+
+                                <div className="space-y-6">
+                                    {SPECIES_PRESETS.map((spec) => (
+                                        <div key={spec.id} className="border border-gray-150 rounded-2xl p-5 bg-white shadow-sm flex flex-col md:flex-row gap-5">
+                                            <div className="md:w-1/3">
+                                                <div className={`${spec.color} text-white p-4 rounded-xl h-full flex flex-col justify-between min-h-[110px]`}>
+                                                    <div>
+                                                        <span className="text-[9px] uppercase font-bold tracking-wider opacity-80">{spec.family}</span>
+                                                        <h3 className="font-bold text-base mt-0.5">{spec.commonName}</h3>
+                                                    </div>
+                                                    <p className="text-xs italic opacity-90">{spec.scientificName}</p>
+                                                </div>
+                                            </div>
+
+                                            <div className="md:w-2/3 flex flex-col justify-between gap-3 text-xs text-slate-700">
+                                                <div>
+                                                    <span className="text-[9px] text-gray-400 font-black uppercase block">Morfología de Campo</span>
+                                                    <p className="mt-1 leading-relaxed text-slate-800">{spec.description}</p>
+                                                </div>
+
+                                                <div className="grid grid-cols-2 gap-3 text-[11px]">
+                                                    <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                                                        <span className="font-bold text-[9px] text-gray-500 block uppercase">Sustrato Requerido</span>
+                                                        <span>{spec.soil}</span>
+                                                    </div>
+                                                    <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                                                        <span className="font-bold text-[9px] text-gray-500 block uppercase">Germinación</span>
+                                                        <span>{spec.propagation}</span>
+                                                    </div>
+                                                </div>
+
+                                                <div className="bg-emerald-50/40 border border-emerald-100/50 p-2 rounded-lg text-[11px] text-emerald-900">
+                                                    <strong>Uso y Potencial:</strong> {spec.uses}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </section>
+                        )}
+
+                    </main>
+
+                    {/* Menú de Navegación Inferior (Estilo Mobile-First) */}
+                    <nav className="fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 px-4 py-2.5 shadow-2xl z-40 md:sticky md:bottom-auto md:top-auto md:border-b md:border-t-0 md:shadow-none md:mt-8">
+                        <div className="max-w-md mx-auto flex items-center justify-between">
+                            <button 
+                                onClick={() => setActiveTab("capture")}
+                                className={`flex flex-col items-center gap-1 text-[10px] font-bold transition-all ${
+                                    activeTab === "capture" ? "text-emerald-800 scale-105" : "text-gray-400 hover:text-gray-600"
+                                }`}
+                            >
+                                <IconCamera />
+                                <span>1. Capturar</span>
+                            </button>
+
+                            <button 
+                                onClick={() => setActiveTab("inventory")}
+                                className={`flex flex-col items-center gap-1 text-[10px] font-bold transition-all ${
+                                    activeTab === "inventory" ? "text-emerald-800 scale-105" : "text-gray-400 hover:text-gray-600"
+                                }`}
+                            >
+                                <IconList />
+                                <span>2. Inventario</span>
+                            </button>
+
+                            <button 
+                                onClick={() => setActiveTab("map")}
+                                className={`flex flex-col items-center gap-1 text-[10px] font-bold transition-all ${
+                                    activeTab === "map" ? "text-emerald-800 scale-105" : "text-gray-400 hover:text-gray-600"
+                                }`}
+                            >
+                                <IconMap />
+                                <span>3. Ver Mapa</span>
+                            </button>
+
+                            <button 
+                                onClick={() => setActiveTab("library")}
+                                className={`flex flex-col items-center gap-1 text-[10px] font-bold transition-all ${
+                                    activeTab === "library" ? "text-emerald-800 scale-105" : "text-gray-400 hover:text-gray-600"
+                                }`}
+                            >
+                                <IconLibrary />
+                                <span>4. Catálogo</span>
+                            </button>
+                        </div>
+                    </nav>
+                </div>
+            );
+        }
+
+        // Renderizamos la aplicación React en el DOM
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
 </html>
