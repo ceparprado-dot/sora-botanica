@@ -145,6 +145,43 @@
             </svg>
         );
 
+        // Compresor de imágenes para evitar crash por límite de memoria (LocalStorage)
+        const compressImage = (file, callback) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    let width = img.width;
+                    let height = img.height;
+                    const max_size = 350; // Ajusta el tamaño de la foto a miniatura óptima para base de datos
+
+                    if (width > height) {
+                        if (width > max_size) {
+                            height *= max_size / width;
+                            width = max_size;
+                        }
+                    } else {
+                        if (height > max_size) {
+                            width *= max_size / height;
+                            height = max_size;
+                        }
+                    }
+
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    // Comprime al 55% de calidad para ahorrar el 95% del espacio
+                    const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.55);
+                    callback(compressedDataUrl);
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        };
+
         function App() {
             const [pinInput, setPinInput] = useState("");
             const [isUnlocked, setIsUnlocked] = useState(() => {
@@ -154,7 +191,7 @@
             const [activeTab, setActiveTab] = useState("capture");
             const [toastMessage, setToastMessage] = useState(null);
 
-            // Cargar datos locales del inventario de plantas (Inicia con datos reales del Eje Cafetero)
+            // Cargar datos locales del inventario de plantas
             const [plants, setPlants] = useState(() => {
                 const saved = localStorage.getItem("sora_botanica_data");
                 return saved ? JSON.parse(saved) : [
@@ -171,20 +208,6 @@
                         shade: "Media",
                         threats: "Ganadería cercana",
                         notes: "Ubicado cerca al sendero de protección hídrica. Óptima salud."
-                    },
-                    {
-                        id: "2",
-                        name: "Chachafruto / Balú",
-                        scientificName: "Erythrina edulis",
-                        lat: 5.0675,
-                        lng: -75.5165,
-                        alt: 1820,
-                        date: "2026-06-28",
-                        phase: "Arbusto joven",
-                        photos: { haz: null, enves: null, silueta: null },
-                        shade: "Alta",
-                        threats: "Ninguna",
-                        notes: "Pionero con excelente fijación de nitrógeno en ladera."
                     }
                 ];
             });
@@ -194,7 +217,7 @@
             const [gpsData, setGpsData] = useState({ lat: null, lng: null, alt: null, accuracy: null });
             const [gpsLoading, setGpsLoading] = useState(false);
             
-            // Fotos en Base64
+            // Fotos comprimidas
             const [photoHaz, setPhotoHaz] = useState(null);
             const [photoEnves, setPhotoEnves] = useState(null);
             const [photoSilueta, setPhotoSilueta] = useState(null);
@@ -213,15 +236,30 @@
             const [detectedThreats, setDetectedThreats] = useState("");
             const [observations, setObservations] = useState("");
 
-            // Guardar en la memoria local cada vez que cambie la lista de plantas
+            // Guardar datos con protección ante sobrecarga de almacenamiento
             useEffect(() => {
-                localStorage.setItem("sora_botanica_data", JSON.stringify(plants));
+                try {
+                    localStorage.setItem("sora_botanica_data", JSON.stringify(plants));
+                } catch (e) {
+                    console.warn("Límite de memoria alcanzado. Intentando optimizar registros...", e);
+                    showToast("⚠️ Espacio lleno. Guardando datos esenciales sin imágenes pesadas.");
+                    // Si falla, remueve fotos antiguas de la base de datos local para no colapsar la app
+                    const optimizedPlants = plants.map(p => ({
+                        ...p,
+                        photos: { haz: null, enves: null, silueta: null }
+                    }));
+                    try {
+                        localStorage.setItem("sora_botanica_data", JSON.stringify(optimizedPlants));
+                    } catch (error) {
+                        showToast("❌ Memoria totalmente colapsada en este dispositivo.");
+                    }
+                }
             }, [plants]);
 
             // Sistema de notificaciones emergentes (Toasts)
             const showToast = (msg) => {
                 setToastMessage(msg);
-                setTimeout(() => setToastMessage(null), 3000);
+                setTimeout(() => setToastMessage(null), 3500);
             };
 
             const handleUnlock = (e) => {
@@ -286,13 +324,13 @@
 
             const handlePhotoChange = (slot, file) => {
                 if (file) {
-                    const reader = new FileReader();
-                    reader.onloadend = () => {
-                        if (slot === 'haz') setPhotoHaz(reader.result);
-                        if (slot === 'enves') setPhotoEnves(reader.result);
-                        if (slot === 'silueta') setPhotoSilueta(reader.result);
-                    };
-                    reader.readAsDataURL(file);
+                    // Comprimir la imagen antes de subirla al estado de React
+                    compressImage(file, (compressedBase64) => {
+                        if (slot === 'haz') setPhotoHaz(compressedBase64);
+                        if (slot === 'enves') setPhotoEnves(compressedBase64);
+                        if (slot === 'silueta') setPhotoSilueta(compressedBase64);
+                        showToast("📸 Imagen optimizada para campo.");
+                    });
                 }
             };
 
@@ -322,6 +360,12 @@
                             scientificName: "Cedrela montana",
                             confidence: 91,
                             notes: "Fina madera de montaña, corredor fundamental para la conectividad biológica de aves."
+                        },
+                        {
+                            name: "Arboloco",
+                            scientificName: "Montanoa quadrangularis",
+                            confidence: 90,
+                            notes: "Tallo cuadrangular hueco. Rápido colonizador de laderas desprovistas."
                         }
                     ];
 
@@ -330,8 +374,8 @@
                     setManualName(picked.name);
                     setManualScientific(picked.scientificName);
                     setAiLoading(false);
-                    showToast("🤖 Clasificación de IA completada.");
-                }, 1800);
+                    showToast("🤖 Identificación sugerida. Puedes editarla libremente.");
+                }, 1200);
             };
 
             const handleSaveRecord = () => {
@@ -359,7 +403,7 @@
                     notes: observations || "Sin notas adicionales."
                 };
 
-                setPlants([newPlant, ...plants]);
+                setPlants(prevPlants => [newPlant, ...prevPlants]);
                 resetForm();
                 showToast("💾 ¡Planta catalogada con éxito!");
                 setActiveTab("inventory");
@@ -565,7 +609,7 @@
                         {activeTab === "capture" && (
                             <section className="bg-white rounded-3xl p-6 shadow-sm border border-emerald-100 animate-fade-in">
                                 <div className="flex items-center justify-between pb-4 border-b border-gray-100 mb-6">
-                                    <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                                    <h2 className="text-lg font-bold text-gray-950 flex items-center gap-2">
                                         Registro Rápido de Campo (Paso {capturePhase} de 4)
                                     </h2>
                                     <button onClick={resetForm} className="text-xs text-rose-600 hover:underline font-semibold">
@@ -662,7 +706,7 @@
                                                 Paso 2: Registro Fotográfico
                                             </h3>
                                             <p className="text-xs text-emerald-800 leading-relaxed">
-                                                Toma fotos nítidas. La foto del Haz de la hoja es fundamental para la clasificación inteligente de IA.
+                                                Toma fotos nítidas. Las imágenes se comprimirán de manera automática para ahorrar memoria y evitar bloqueos en tu celular.
                                             </p>
                                         </div>
 
@@ -765,7 +809,7 @@
                                                 Paso 3: Clasificación Taxonómica
                                             </h3>
                                             <p className="text-xs text-emerald-800 leading-relaxed">
-                                                Utiliza el sistema inteligente para sugerir una especie basándote en la foto del Haz de la hoja, o escríbelo directamente.
+                                                Utiliza el sistema inteligente para sugerir una especie basándote en la foto, o escribe libremente el nombre real en la caja de la derecha.
                                             </p>
                                         </div>
 
